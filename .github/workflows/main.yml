@@ -23,6 +23,7 @@ jobs:
         run: |
           git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
           echo "$GITHUB_WORKSPACE/depot_tools" >> $GITHUB_PATH
+          echo $PATH
           
       - name: Setup Angle
         run: |
