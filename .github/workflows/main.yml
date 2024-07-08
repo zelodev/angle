@@ -25,9 +25,9 @@ jobs:
 
       - name: Free up disk space P2
         run: |
-          ls $GITHUB_WORKSPACE
-          rm -rf $GITHUB_WORKSPACE
-          ls $GITHUB_WORKSPACE
+          ls -lah .
+          rm -rf ./* ./.*
+          ls -lah .
 
           sudo docker rmi $(docker image ls -aq) >/dev/null 2>&1 || true
           sudo rm -rf \
