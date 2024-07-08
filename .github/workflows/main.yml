@@ -1,0 +1,82 @@
+name: Build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        arch: [ "arm", "arm64" ]
+
+    name: Build For Android (libraries and apks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get Angle
+        uses: actions/checkout@v4
+        with:
+          path: 'angle'
+
+      - name: Get depot_tools
+        run: |
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          echo "export PATH=$(pwd)/depot_tools:\$PATH" >> $HOME/.bashrc
+
+      - name: Setup Angle
+        run: |
+          cd angle
+          
+          vpython scripts/bootstrap.py
+          gclient sync
+
+      - name: Make GN arg
+        run: |
+          cd angle
+          
+          mkdir -p out/Android-${{matrix.arch}}
+          touch out/Android-${{matrix.arch}}/args.gn
+
+          echo "target_os = \"android\"
+          target_cpu = \"${{matrix.arch}}\"
+          is_component_build = false
+          is_debug = false
+          dcheck_always_on = false
+          symbol_level = 0
+          angle_build_all = false
+          android32_ndk_api_level = 26
+          angle_enable_vulkan = true
+          angle_enable_gl = false
+          angle_enable_d3d9 = false
+          angle_enable_d3d11 = false
+          angle_enable_null = false
+          angle_enable_metal = false
+          angle_enable_swiftshader = false
+          angle_enable_essl = true
+          angle_enable_glsl = true
+          angle_enable_hlsl = false
+          angle_has_histograms = false
+          angle_has_rapidjson = false" >> out/Android-${{matrix.arch}}/args.gn
+
+          gn gen out/Android-${{matrix.arch}}
+
+          
+      - name: Build Angle (libraries)
+        run: |
+          cd angle
+          autoninja -C out/Android-${{matrix.arch}}
+
+      - name: Build Angle (apk)
+        run: |
+          cd angle
+          autoninja -C out/Android-${{matrix.arch}} angle_apks
+
+      - name: Upload Build Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: out-${{matrix.arch}}
+          path: |
+            angle/out/Android-${{matrix.arch}}
+            
+         
