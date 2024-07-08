@@ -10,11 +10,20 @@
          "Applications":[
             {
                "AppName":"org.chromium.angle"
+            },
+            {
+               "AppName":"com.finalwire.aida64"
+            },
+            {
+               "AppName":"com.garena.game.codm"
             }
          ],
          "Devices":[
             {
                "Manufacturer":"Google"
+            },
+            {
+               "Manufacturer":"Samsung"
             }
          ]
       }
