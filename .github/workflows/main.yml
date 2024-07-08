@@ -1,7 +1,6 @@
 name: Build
 
 on:
-  push:
   workflow_dispatch:
 
 jobs:
@@ -83,6 +82,7 @@ jobs:
           is_component_build = false
           is_debug = false
           dcheck_always_on = false
+          angle_assert_always_on = false
           symbol_level = 0
           angle_build_all = false
           android32_ndk_api_level = 26
@@ -95,7 +95,8 @@ jobs:
           angle_enable_swiftshader = false
           angle_enable_essl = true
           angle_enable_glsl = true
-          angle_enable_hlsl = false
+          angle_enable_hlsl = true
+          angle_expose_non_conformant_extensions_and_versions = true
           angle_has_histograms = false
           angle_has_rapidjson = false" >> out/Android-${{matrix.arch}}/args.gn
 
