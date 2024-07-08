@@ -22,8 +22,8 @@ jobs:
       - name: Get depot_tools
         run: |
           git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
-          echo "export PATH=$(pwd)/depot_tools:\$PATH" >> $HOME/.bashrc
-
+          echo "$(pwd)/depot_tools" >> $GITHUB_PATH
+          
       - name: Setup Angle
         run: |
           cd angle
@@ -61,7 +61,6 @@ jobs:
 
           gn gen out/Android-${{matrix.arch}}
 
-          
       - name: Build Angle (libraries)
         run: |
           cd angle
