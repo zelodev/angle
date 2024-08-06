@@ -7,7 +7,7 @@ jobs:
   build:
     strategy:
       matrix:
-        arch: [ "arm", "arm64" ]
+        arch: [ "arm64" ]
 
     name: Build For Android (libraries and apks)
     runs-on: ubuntu-latest
