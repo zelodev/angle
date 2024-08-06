@@ -81,11 +81,12 @@ jobs:
           target_cpu = \"${{matrix.arch}}\"
           is_component_build = false
           is_debug = false
+          is_official_build = true
           dcheck_always_on = false
           angle_assert_always_on = false
           symbol_level = 0
           angle_build_all = false
-          android32_ndk_api_level = 26
+          android32_ndk_api_level = 33
           angle_enable_vulkan = true
           angle_enable_gl = false
           angle_enable_d3d9 = false
