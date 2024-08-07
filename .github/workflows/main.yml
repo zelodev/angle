@@ -82,6 +82,7 @@ jobs:
           is_component_build = false
           is_debug = false
           is_official_build = false
+          angle_build_all = false
           angle_enable_vulkan = true
           chrome_pgo_phase = 0
           angle_assert_always_on = true
