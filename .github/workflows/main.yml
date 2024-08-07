@@ -80,24 +80,11 @@ jobs:
           echo "target_os = \"android\"
           target_cpu = \"arm64\"
           is_component_build = false
-          is_debug = false
-          is_official_build = true
+          is_debug = true
+          is_official_build = false
           angle_enable_vulkan = true
           chrome_pgo_phase = 0
-          symbol_level = 0
-          angle_build_all = false
-          android32_ndk_api_level = 33
-          angle_enable_gl = false
-          angle_enable_d3d9 = false
-          angle_enable_d3d11 = false
-          angle_enable_null = false
-          angle_enable_metal = false
-          angle_enable_swiftshader = false
-          angle_enable_essl = true
-          angle_enable_glsl = true
-          angle_enable_hlsl = true
-          angle_has_histograms = false
-          angle_has_rapidjson = false
+          angle_assert_always_on = true
           angle_expose_non_conformant_extensions_and_versions = true" >> out/Android-${{matrix.arch}}/args.gn
 
           gn gen out/Android-${{matrix.arch}}
