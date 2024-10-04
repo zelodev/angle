@@ -527,11 +527,18 @@ struct FeaturesGL : FeatureSetBase
         &members, "http://crbug.com/1144207"
     };
 
-    FeatureInfo syncVertexArraysToDefault = {
-        "syncVertexArraysToDefault",
+    FeatureInfo syncAllVertexArraysToDefault = {
+        "syncAllVertexArraysToDefault",
         FeatureCategory::OpenGLWorkarounds,
         "Only use the default VAO because of missing support or driver bugs",
         &members, "http://anglebug.com/40096758"
+    };
+
+    FeatureInfo syncDefaultVertexArraysToDefault = {
+        "syncDefaultVertexArraysToDefault",
+        FeatureCategory::OpenGLWorkarounds,
+        "Sync all frontend vertex array objects to the driver default vertex array",
+        &members, "http://anglebug.com/355034686"
     };
 
     FeatureInfo sanitizeAMDGPURendererString = {
@@ -666,13 +673,6 @@ struct FeaturesGL : FeatureSetBase
         "supportsShaderFramebufferFetchNonCoherentEXT",
         FeatureCategory::OpenGLFeatures,
         "Backend GL context supports EXT_shader_framebuffer_fetch_non_coherent extension",
-        &members, "http://anglebug.com/40096838"
-    };
-
-    FeatureInfo supportsShaderPixelLocalStorageEXT = {
-        "supportsShaderPixelLocalStorageEXT",
-        FeatureCategory::OpenGLFeatures,
-        "Backend GL context supports EXT_shader_pixel_local_storage extension",
         &members, "http://anglebug.com/40096838"
     };
 

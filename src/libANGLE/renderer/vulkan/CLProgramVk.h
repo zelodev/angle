@@ -44,7 +44,8 @@ class CLProgramVk : public CLProgramImpl
         angle::HashMap<std::string, std::string> kernelAttributes;
         angle::HashMap<std::string, std::array<uint32_t, 3>> kernelCompileWorkgroupSize;
         angle::HashMap<uint32_t, VkPushConstantRange> pushConstants;
-        std::array<uint32_t, 3> specConstantWorkgroupSizeIDs{0, 0, 0};
+        angle::PackedEnumMap<SpecConstantType, uint32_t> specConstantIDs;
+        angle::PackedEnumBitSet<SpecConstantType, uint32_t> specConstantsUsed;
         CLKernelArgsMap kernelArgsMap;
     };
 
@@ -183,6 +184,30 @@ class CLProgramVk : public CLProgramImpl
             return getPushConstantRangeFromClspvReflectionType(
                 NonSemanticClspvReflectionPushConstantGlobalSize);
         }
+
+        inline const VkPushConstantRange *getEnqueuedLocalSizeRange() const
+        {
+            return getPushConstantRangeFromClspvReflectionType(
+                NonSemanticClspvReflectionPushConstantEnqueuedLocalSize);
+        }
+
+        inline const VkPushConstantRange *getNumWorkgroupsRange() const
+        {
+            return getPushConstantRangeFromClspvReflectionType(
+                NonSemanticClspvReflectionPushConstantNumWorkgroups);
+        }
+
+        inline const VkPushConstantRange *getRegionOffsetRange() const
+        {
+            return getPushConstantRangeFromClspvReflectionType(
+                NonSemanticClspvReflectionPushConstantRegionOffset);
+        }
+
+        inline const VkPushConstantRange *getRegionGroupOffsetRange() const
+        {
+            return getPushConstantRangeFromClspvReflectionType(
+                NonSemanticClspvReflectionPushConstantRegionGroupOffset);
+        }
     };
     using DevicePrograms   = angle::HashMap<const _cl_device_id *, DeviceProgramData>;
     using LinkPrograms     = std::vector<const DeviceProgramData *>;
@@ -236,22 +261,37 @@ class CLProgramVk : public CLProgramImpl
                        const LinkProgramsList &LinkProgramsList);
     angle::spirv::Blob stripReflection(const DeviceProgramData *deviceProgramData);
 
-    angle::Result allocateDescriptorSet(const vk::DescriptorSetLayout &descriptorSetLayout,
+    angle::Result allocateDescriptorSet(const DescriptorSetIndex setIndex,
+                                        const vk::DescriptorSetLayout &descriptorSetLayout,
+                                        vk::CommandBufferHelperCommon *commandBuffer,
                                         VkDescriptorSet *descriptorSetOut);
 
     // Sets the status for given associated device programs
     void setBuildStatus(const cl::DevicePtrs &devices, cl_build_status status);
+
+    vk::RefCountedDescriptorPoolBinding &getDescriptorPoolBinding(DescriptorSetIndex index)
+    {
+        return mDescriptorPoolBindings[index];
+    }
+
+    vk::MetaDescriptorPool &getMetaDescriptorPool(DescriptorSetIndex index)
+    {
+        return mMetaDescriptorPools[index];
+    }
+
+    vk::DescriptorPoolPointer &getDescriptorPoolPointer(DescriptorSetIndex index)
+    {
+        return mDescriptorPools[index];
+    }
 
   private:
     CLContextVk *mContext;
     std::string mProgramOpts;
     vk::RefCounted<vk::ShaderModule> mShader;
     DevicePrograms mAssociatedDevicePrograms;
-    PipelineLayoutCache mPipelineLayoutCache;
-    vk::MetaDescriptorPool mMetaDescriptorPool;
-    DescriptorSetLayoutCache mDescSetLayoutCache;
+    vk::DescriptorSetArray<vk::MetaDescriptorPool> mMetaDescriptorPools;
     vk::DescriptorSetArray<vk::DescriptorPoolPointer> mDescriptorPools;
-    vk::RefCountedDescriptorPoolBinding mPoolBinding;
+    vk::DescriptorSetArray<vk::RefCountedDescriptorPoolBinding> mDescriptorPoolBindings;
     angle::SimpleMutex mProgramMutex;
 };
 

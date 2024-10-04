@@ -40,6 +40,7 @@ class UpdateDescriptorSetsBuilder;
 // - Set 1 contains all textures (including texture buffers).
 // - Set 2 contains all other shader resources, such as uniform and storage blocks, atomic counter
 //   buffers, images and image buffers.
+// - Set 3 reserved for OpenCL
 
 enum class DescriptorSetIndex : uint32_t
 {
@@ -48,7 +49,13 @@ enum class DescriptorSetIndex : uint32_t
     Texture        = 1,         // Textures set index
     ShaderResource = 2,         // Other shader resources set index
 
-    InvalidEnum = 3,
+    // CL specific naming for set indices
+    LiteralSampler  = 0,
+    KernelArguments = 1,
+    ModuleConstants = 2,
+    Printf          = 3,
+
+    InvalidEnum = 4,
     EnumCount   = InvalidEnum,
 };
 
@@ -442,10 +449,7 @@ struct PackedAttribDesc final
 {
     uint8_t format;
     uint8_t divisor;
-
-    // Desktop drivers support
     uint16_t offset : kAttributeOffsetMaxBits;
-
     uint16_t compressed : 1;
 };
 
@@ -1363,6 +1367,8 @@ class PipelineCacheAccess
                                    const VkComputePipelineCreateInfo &createInfo,
                                    vk::Pipeline *pipelineOut);
 
+    VkResult getCacheData(vk::Context *context, size_t *cacheSize, void *cacheData);
+
     void merge(Renderer *renderer, const vk::PipelineCache &pipelineCache);
 
     bool isThreadSafe() const { return mMutex != nullptr; }
@@ -1375,7 +1381,7 @@ class PipelineCacheAccess
 };
 
 // Monolithic pipeline creation tasks are created as soon as a pipeline is created out of libraries.
-// However, they are not immediately posted to the worker queue to allow pacing.  One each use of a
+// However, they are not immediately posted to the worker queue to allow pacing.  On each use of a
 // pipeline, an attempt is made to post the task.
 class CreateMonolithicPipelineTask : public Context, public angle::Closure
 {
@@ -1859,8 +1865,7 @@ class DescriptorSetDescBuilder final
 
     // Specific helpers for shader resource descriptors.
     template <typename CommandBufferT>
-    void updateOneShaderBuffer(ContextVk *contextVk,
-                               CommandBufferT *commandBufferHelper,
+    void updateOneShaderBuffer(CommandBufferT *commandBufferHelper,
                                const ShaderInterfaceVariableInfoMap &variableInfoMap,
                                const gl::BufferVector &buffers,
                                const gl::InterfaceBlock &block,
@@ -1871,8 +1876,7 @@ class DescriptorSetDescBuilder final
                                const WriteDescriptorDescs &writeDescriptorDescs,
                                const GLbitfield memoryBarrierBits);
     template <typename CommandBufferT>
-    void updateShaderBuffers(ContextVk *contextVk,
-                             CommandBufferT *commandBufferHelper,
+    void updateShaderBuffers(CommandBufferT *commandBufferHelper,
                              const gl::ProgramExecutable &executable,
                              const ShaderInterfaceVariableInfoMap &variableInfoMap,
                              const gl::BufferVector &buffers,
@@ -1883,8 +1887,7 @@ class DescriptorSetDescBuilder final
                              const WriteDescriptorDescs &writeDescriptorDescs,
                              const GLbitfield memoryBarrierBits);
     template <typename CommandBufferT>
-    void updateAtomicCounters(ContextVk *contextVk,
-                              CommandBufferT *commandBufferHelper,
+    void updateAtomicCounters(CommandBufferT *commandBufferHelper,
                               const gl::ProgramExecutable &executable,
                               const ShaderInterfaceVariableInfoMap &variableInfoMap,
                               const gl::BufferVector &buffers,

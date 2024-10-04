@@ -233,7 +233,9 @@ class CLCommandQueueVk : public CLCommandQueueImpl
 
     // Create-update-bind the kernel's descriptor set, put push-constants in cmd buffer, capture
     // kernel resources, and handle kernel execution dependencies
-    angle::Result processKernelResources(CLKernelVk &kernelVk, const cl::NDRange &ndrange);
+    angle::Result processKernelResources(CLKernelVk &kernelVk,
+                                         const cl::NDRange &ndrange,
+                                         const cl::WorkgroupCount &workgroupCount);
 
     angle::Result submitCommands();
     angle::Result finishInternal();
@@ -241,6 +243,15 @@ class CLCommandQueueVk : public CLCommandQueueImpl
     angle::Result flushComputePassCommands();
     angle::Result processWaitlist(const cl::EventPtrs &waitEvents);
     angle::Result createEvent(CLEventImpl::CreateFunc *createFunc);
+
+    angle::Result onResourceAccess(const vk::CommandBufferAccess &access);
+    angle::Result getCommandBuffer(const vk::CommandBufferAccess &access,
+                                   vk::OutsideRenderPassCommandBuffer **commandBufferOut)
+    {
+        ANGLE_TRY(onResourceAccess(access));
+        *commandBufferOut = &mComputePassCommands->getCommandBuffer();
+        return angle::Result::Continue;
+    }
 
     CLContextVk *mContext;
     const CLDeviceVk *mDevice;

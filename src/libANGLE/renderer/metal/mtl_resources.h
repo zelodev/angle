@@ -245,7 +245,7 @@ class Texture final : public Resource,
     TextureRef createMipsSwizzleView(const MipmapNativeLevel &baseLevel,
                                      uint32_t levels,
                                      MTLPixelFormat format,
-                                     const TextureSwizzleChannels &swizzle);
+                                     const MTLTextureSwizzleChannels &swizzle);
 
     MTLTextureType textureType() const;
     MTLPixelFormat pixelFormat() const;
@@ -274,7 +274,9 @@ class Texture final : public Resource,
 
     angle::Result resize(ContextMtl *context, uint32_t width, uint32_t height);
 
-    // For render target
+    // Get the color write mask to restrict writing to certain color channels in this texture. It's
+    // used for textures having emulated mtl::Format such as RGB which should always have alpha
+    // value being one.
     MTLColorWriteMask getColorWritableMask() const { return *mColorWritableMask; }
     void setColorWritableMask(MTLColorWriteMask mask) { *mColorWritableMask = mask; }
 
@@ -381,7 +383,7 @@ class Texture final : public Resource,
             MTLTextureType textureType,
             NSRange levels,
             NSRange slices,
-            const TextureSwizzleChannels &swizzle);
+            const MTLTextureSwizzleChannels &swizzle);
 
     void syncContentIfNeeded(ContextMtl *context);
 

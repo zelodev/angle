@@ -5,6 +5,8 @@
 //
 // CLCommandQueueVk.cpp: Implements the class methods for CLCommandQueueVk.
 
+#include "common/PackedEnums.h"
+
 #include "libANGLE/renderer/vulkan/CLCommandQueueVk.h"
 #include "libANGLE/renderer/vulkan/CLContextVk.h"
 #include "libANGLE/renderer/vulkan/CLDeviceVk.h"
@@ -12,7 +14,9 @@
 #include "libANGLE/renderer/vulkan/CLMemoryVk.h"
 #include "libANGLE/renderer/vulkan/CLProgramVk.h"
 #include "libANGLE/renderer/vulkan/cl_types.h"
+#include "libANGLE/renderer/vulkan/vk_cache_utils.h"
 #include "libANGLE/renderer/vulkan/vk_renderer.h"
+#include "libANGLE/renderer/vulkan/vk_wrapper.h"
 
 #include "libANGLE/CLBuffer.h"
 #include "libANGLE/CLCommandQueue.h"
@@ -233,8 +237,27 @@ angle::Result CLCommandQueueVk::enqueueCopyBuffer(const cl::Buffer &srcBuffer,
                                                   const cl::EventPtrs &waitEvents,
                                                   CLEventImpl::CreateFunc *eventCreateFunc)
 {
-    UNIMPLEMENTED();
-    ANGLE_CL_RETURN_ERROR(CL_OUT_OF_RESOURCES);
+    std::scoped_lock<std::mutex> sl(mCommandQueueMutex);
+
+    ANGLE_TRY(processWaitlist(waitEvents));
+
+    CLMemoryVk *srcBufferVk = &srcBuffer.getImpl<CLMemoryVk>();
+    CLMemoryVk *dstBufferVk = &dstBuffer.getImpl<CLMemoryVk>();
+
+    vk::CommandBufferAccess access;
+    access.onBufferTransferRead(&srcBufferVk->getBuffer());
+    access.onBufferTransferWrite(&dstBufferVk->getBuffer());
+
+    vk::OutsideRenderPassCommandBuffer *commandBuffer;
+    ANGLE_TRY(getCommandBuffer(access, &commandBuffer));
+
+    const VkBufferCopy copyRegion = {srcOffset, dstOffset, size};
+    commandBuffer->copyBuffer(srcBufferVk->getBuffer().getBuffer(),
+                              dstBufferVk->getBuffer().getBuffer(), 1, &copyRegion);
+
+    ANGLE_TRY(createEvent(eventCreateFunc));
+
+    return angle::Result::Continue;
 }
 
 angle::Result CLCommandQueueVk::enqueueCopyBufferRect(const cl::Buffer &srcBuffer,
@@ -400,7 +423,9 @@ angle::Result CLCommandQueueVk::enqueueNDRangeKernel(const cl::Kernel &kernel,
     vk::PipelineHelper *pipelineHelper = nullptr;
     CLKernelVk &kernelImpl             = kernel.getImpl<CLKernelVk>();
 
-    ANGLE_TRY(processKernelResources(kernelImpl, ndrange));
+    // Here, we create-update-bind the kernel's descriptor set, put push-constants in cmd
+    // buffer, capture kernel resources, and handle kernel execution dependencies
+    ANGLE_TRY(processKernelResources(kernelImpl, ndrange, workgroupCount));
 
     // Fetch or create compute pipeline (if we miss in cache)
     ANGLE_CL_IMPL_TRY_ERROR(mContext->getRenderer()->getPipelineCache(mContext, &pipelineCache),
@@ -409,6 +434,7 @@ angle::Result CLCommandQueueVk::enqueueNDRangeKernel(const cl::Kernel &kernel,
         &pipelineCache, ndrange, mCommandQueue.getDevice(), &pipelineHelper, &workgroupCount));
 
     mComputePassCommands->retainResource(pipelineHelper);
+
     mComputePassCommands->getCommandBuffer().bindComputePipeline(pipelineHelper->getPipeline());
     mComputePassCommands->getCommandBuffer().dispatch(workgroupCount[0], workgroupCount[1],
                                                       workgroupCount[2]);
@@ -558,7 +584,8 @@ angle::Result CLCommandQueueVk::syncHostBuffers()
 }
 
 angle::Result CLCommandQueueVk::processKernelResources(CLKernelVk &kernelVk,
-                                                       const cl::NDRange &ndrange)
+                                                       const cl::NDRange &ndrange,
+                                                       const cl::WorkgroupCount &workgroupCount)
 {
     bool needsBarrier = false;
     UpdateDescriptorSetsBuilder updateDescriptorSetsBuilder;
@@ -566,11 +593,41 @@ angle::Result CLCommandQueueVk::processKernelResources(CLKernelVk &kernelVk,
         kernelVk.getProgram()->getDeviceProgramData(mCommandQueue.getDevice().getNative());
     ASSERT(devProgramData != nullptr);
 
-    // Allocate descriptor set
-    VkDescriptorSet descriptorSet{VK_NULL_HANDLE};
-    ANGLE_TRY(kernelVk.getProgram()->allocateDescriptorSet(
-        kernelVk.getDescriptorSetLayouts()[DescriptorSetIndex::ShaderResource].get(),
-        &descriptorSet));
+    // Set the descriptor set layouts and allocate descriptor sets
+    // The descriptor set layouts are setup in the order of their appearance, as Vulkan requires
+    // them to point to valid handles.
+    angle::EnumIterator<DescriptorSetIndex> layoutIndex(DescriptorSetIndex::LiteralSampler);
+    for (DescriptorSetIndex index : angle::AllEnums<DescriptorSetIndex>())
+    {
+        if (!kernelVk.getDescriptorSetLayoutDesc(index).empty())
+        {
+            // Setup the descriptor layout
+            ANGLE_CL_IMPL_TRY_ERROR(mContext->getDescriptorSetLayoutCache()->getDescriptorSetLayout(
+                                        mContext, kernelVk.getDescriptorSetLayoutDesc(index),
+                                        &kernelVk.getDescriptorSetLayouts()[*layoutIndex]),
+                                    CL_INVALID_OPERATION);
+
+            ANGLE_CL_IMPL_TRY_ERROR(
+                kernelVk.getProgram()->getMetaDescriptorPool(index).bindCachedDescriptorPool(
+                    mContext, kernelVk.getDescriptorSetLayoutDesc(index), 1,
+                    mContext->getDescriptorSetLayoutCache(),
+                    &kernelVk.getProgram()->getDescriptorPoolPointer(index)),
+                CL_INVALID_OPERATION);
+
+            // Allocate descriptor set
+            ANGLE_TRY(kernelVk.getProgram()->allocateDescriptorSet(
+                index, kernelVk.getDescriptorSetLayouts()[*layoutIndex].get(), mComputePassCommands,
+                &kernelVk.getDescriptorSet(index)));
+
+            ++layoutIndex;
+        }
+    }
+
+    // Setup the pipeline layout
+    ANGLE_CL_IMPL_TRY_ERROR(mContext->getPipelineLayoutCache()->getPipelineLayout(
+                                mContext, kernelVk.getPipelineLayoutDesc(),
+                                kernelVk.getDescriptorSetLayouts(), &kernelVk.getPipelineLayout()),
+                            CL_INVALID_OPERATION);
 
     // Push global offset data
     const VkPushConstantRange *globalOffsetRange = devProgramData->getGlobalOffsetRange();
@@ -588,6 +645,53 @@ angle::Result CLCommandQueueVk::processKernelResources(CLKernelVk &kernelVk,
         mComputePassCommands->getCommandBuffer().pushConstants(
             kernelVk.getPipelineLayout().get(), VK_SHADER_STAGE_COMPUTE_BIT,
             globalSizeRange->offset, globalSizeRange->size, ndrange.globalWorkSize.data());
+    }
+
+    // Push region offset data.
+    const VkPushConstantRange *regionOffsetRange = devProgramData->getRegionOffsetRange();
+    if (regionOffsetRange != nullptr)
+    {
+        // We dont support non-uniform batches yet in ANGLE, this field also represents global
+        // offset for NDR in uniform cases. Update this when non-uniform batches are supported.
+        // https://github.com/google/clspv/blob/main/docs/OpenCLCOnVulkan.md#module-scope-push-constants
+        mComputePassCommands->getCommandBuffer().pushConstants(
+            kernelVk.getPipelineLayout().get(), VK_SHADER_STAGE_COMPUTE_BIT,
+            regionOffsetRange->offset, regionOffsetRange->size, ndrange.globalWorkOffset.data());
+    }
+
+    // Push region group offset data.
+    const VkPushConstantRange *regionGroupOffsetRange = devProgramData->getRegionGroupOffsetRange();
+    if (regionGroupOffsetRange != nullptr)
+    {
+        // We dont support non-uniform batches yet in ANGLE, and based on clspv doc/notes:
+        // "only required when non-uniform NDRanges are supported"
+        // For now, we set this field to zeros until we later support non-uniform.
+        // https://github.com/google/clspv/blob/main/docs/OpenCLCOnVulkan.md#module-scope-push-constants
+        uint32_t regionGroupOffsets[3] = {0, 0, 0};
+        mComputePassCommands->getCommandBuffer().pushConstants(
+            kernelVk.getPipelineLayout().get(), VK_SHADER_STAGE_COMPUTE_BIT,
+            regionGroupOffsetRange->offset, regionGroupOffsetRange->size, &regionGroupOffsets);
+    }
+
+    // Push enqueued local size
+    const VkPushConstantRange *enqueuedLocalSizeRange = devProgramData->getEnqueuedLocalSizeRange();
+    if (enqueuedLocalSizeRange != nullptr)
+    {
+        mComputePassCommands->getCommandBuffer().pushConstants(
+            kernelVk.getPipelineLayout().get(), VK_SHADER_STAGE_COMPUTE_BIT,
+            enqueuedLocalSizeRange->offset, enqueuedLocalSizeRange->size,
+            ndrange.localWorkSize.data());
+    }
+
+    // Push number of workgroups
+    const VkPushConstantRange *numWorkgroupsRange = devProgramData->getNumWorkgroupsRange();
+    if (devProgramData->reflectionData.pushConstants.contains(
+            NonSemanticClspvReflectionPushConstantNumWorkgroups))
+    {
+        uint32_t numWorkgroups[3] = {workgroupCount[0], workgroupCount[1], workgroupCount[2]};
+        mComputePassCommands->getCommandBuffer().pushConstants(
+            kernelVk.getPipelineLayout().get(), VK_SHADER_STAGE_COMPUTE_BIT,
+            numWorkgroupsRange->offset, numWorkgroupsRange->size, &numWorkgroups);
     }
 
     // Retain kernel object until we finish executing it later
@@ -636,7 +740,8 @@ angle::Result CLCommandQueueVk::processKernelResources(CLKernelVk &kernelVk,
                         : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
                 writeDescriptorSet.pBufferInfo = &bufferInfo;
                 writeDescriptorSet.sType       = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                writeDescriptorSet.dstSet      = descriptorSet;
+                writeDescriptorSet.dstSet =
+                    kernelVk.getDescriptorSet(DescriptorSetIndex::KernelArguments);
                 writeDescriptorSet.dstBinding  = arg.descriptorBinding;
                 break;
             }
@@ -679,7 +784,8 @@ angle::Result CLCommandQueueVk::processKernelResources(CLKernelVk &kernelVk,
 
     mComputePassCommands->getCommandBuffer().bindDescriptorSets(
         kernelVk.getPipelineLayout().get(), VK_PIPELINE_BIND_POINT_COMPUTE,
-        DescriptorSetIndex::Internal, 1, &descriptorSet, 0, nullptr);
+        DescriptorSetIndex::Internal, 1,
+        &kernelVk.getDescriptorSet(DescriptorSetIndex::KernelArguments), 0, nullptr);
 
     return angle::Result::Continue;
 }
@@ -775,6 +881,14 @@ angle::Result CLCommandQueueVk::createEvent(CLEventImpl::CreateFunc *createFunc)
             // Save a reference to this event
             mAssociatedEvents.push_back(cl::EventPtr{&eventVk->getFrontendObject()});
 
+            if (mCommandQueue.getProperties().isSet(CL_QUEUE_PROFILING_ENABLE))
+            {
+                if (IsError(mCommandQueue.getImpl<CLCommandQueueVk>().flush()))
+                {
+                    ANGLE_CL_SET_ERROR(CL_OUT_OF_RESOURCES);
+                }
+            }
+
             return CLEventImpl::Ptr(eventVk);
         };
     }
@@ -846,6 +960,53 @@ angle::Result CLCommandQueueVk::finishInternal()
     mAssociatedEvents.clear();
     mDependencyTracker.clear();
     mKernelCaptures.clear();
+
+    return angle::Result::Continue;
+}
+
+// Helper function to insert appropriate memory barriers before accessing the resources in the
+// command buffer.
+angle::Result CLCommandQueueVk::onResourceAccess(const vk::CommandBufferAccess &access)
+{
+    // Buffers
+    for (const vk::CommandBufferBufferAccess &bufferAccess : access.getReadBuffers())
+    {
+        if (mComputePassCommands->usesBufferForWrite(*bufferAccess.buffer))
+        {
+            // read buffers only need a new command buffer if previously used for write
+            ANGLE_TRY(flushComputePassCommands());
+        }
+
+        mComputePassCommands->bufferRead(bufferAccess.accessType, bufferAccess.stage,
+                                         bufferAccess.buffer);
+    }
+
+    for (const vk::CommandBufferBufferAccess &bufferAccess : access.getWriteBuffers())
+    {
+        if (mComputePassCommands->usesBuffer(*bufferAccess.buffer))
+        {
+            // write buffers always need a new command buffer
+            ANGLE_TRY(flushComputePassCommands());
+        }
+
+        mComputePassCommands->bufferWrite(bufferAccess.accessType, bufferAccess.stage,
+                                          bufferAccess.buffer);
+        if (bufferAccess.buffer->isHostVisible())
+        {
+            // currently all are host visible so nothing to do
+        }
+    }
+
+    for (const vk::CommandBufferBufferExternalAcquireRelease &bufferAcquireRelease :
+         access.getExternalAcquireReleaseBuffers())
+    {
+        mComputePassCommands->retainResourceForWrite(bufferAcquireRelease.buffer);
+    }
+
+    for (const vk::CommandBufferResourceAccess &resourceAccess : access.getAccessResources())
+    {
+        mComputePassCommands->retainResource(resourceAccess.resource);
+    }
 
     return angle::Result::Continue;
 }

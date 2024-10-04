@@ -52,15 +52,80 @@ void CommandBuffer::draw(uint32_t vertexCount,
     drawCommand->firstInstance = firstInstance;
 }
 
+void CommandBuffer::drawIndexed(uint32_t indexCount,
+                                uint32_t instanceCount,
+                                uint32_t firstIndex,
+                                int32_t baseVertex,
+                                uint32_t firstInstance)
+{
+    DrawIndexedCommand *drawIndexedCommand = initCommand<CommandID::DrawIndexed>();
+    drawIndexedCommand->indexCount         = indexCount;
+    drawIndexedCommand->instanceCount      = instanceCount;
+    drawIndexedCommand->firstIndex         = firstIndex;
+    drawIndexedCommand->baseVertex         = baseVertex;
+    drawIndexedCommand->firstInstance      = firstInstance;
+}
+
 void CommandBuffer::setPipeline(wgpu::RenderPipeline pipeline)
 {
     SetPipelineCommand *setPiplelineCommand = initCommand<CommandID::SetPipeline>();
     setPiplelineCommand->pipeline = GetReferencedObject(mReferencedRenderPipelines, pipeline);
 }
 
+void CommandBuffer::setScissorRect(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+{
+    SetScissorRectCommand *setScissorRectCommand = initCommand<CommandID::SetScissorRect>();
+    setScissorRectCommand->x                     = x;
+    setScissorRectCommand->y                     = y;
+    setScissorRectCommand->width                 = width;
+    setScissorRectCommand->height                = height;
+
+    mHasSetScissorCommand = true;
+}
+
+void CommandBuffer::setViewport(float x,
+                                float y,
+                                float width,
+                                float height,
+                                float minDepth,
+                                float maxDepth)
+{
+    SetViewportCommand *setViewportCommand = initCommand<CommandID::SetViewport>();
+    setViewportCommand->x                  = x;
+    setViewportCommand->y                  = y;
+    setViewportCommand->width              = width;
+    setViewportCommand->height             = height;
+    setViewportCommand->minDepth           = minDepth;
+    setViewportCommand->maxDepth           = maxDepth;
+
+    mHasSetViewportCommand = true;
+}
+
+void CommandBuffer::setIndexBuffer(wgpu::Buffer buffer,
+                                   wgpu::IndexFormat format,
+                                   uint64_t offset,
+                                   uint64_t size)
+{
+    SetIndexBufferCommand *setIndexBufferCommand = initCommand<CommandID::SetIndexBuffer>();
+    setIndexBufferCommand->buffer                = GetReferencedObject(mReferencedBuffers, buffer);
+    setIndexBufferCommand->format                = format;
+    setIndexBufferCommand->offset                = offset;
+    setIndexBufferCommand->size                  = size;
+}
+
+void CommandBuffer::setVertexBuffer(uint32_t slot, wgpu::Buffer buffer)
+{
+    SetVertexBufferCommand *setVertexBufferCommand = initCommand<CommandID::SetVertexBuffer>();
+    setVertexBufferCommand->slot                   = slot;
+    setVertexBufferCommand->buffer = GetReferencedObject(mReferencedBuffers, buffer);
+}
+
 void CommandBuffer::clear()
 {
     mCommandCount = 0;
+
+    mHasSetScissorCommand  = false;
+    mHasSetViewportCommand = false;
 
     if (!mCommandBlocks.empty())
     {
@@ -73,6 +138,7 @@ void CommandBuffer::clear()
     mCurrentCommandBlock = 0;
 
     mReferencedRenderPipelines.clear();
+    mReferencedBuffers.clear();
 }
 
 void CommandBuffer::recordCommands(wgpu::RenderPassEncoder encoder)
@@ -105,11 +171,61 @@ void CommandBuffer::recordCommands(wgpu::RenderPassEncoder encoder)
                     break;
                 }
 
+                case CommandID::DrawIndexed:
+                {
+                    const DrawIndexedCommand &drawIndexedCommand =
+                        GetCommandAndIterate<CommandID::DrawIndexed>(&currentCommand);
+                    encoder.DrawIndexed(
+                        drawIndexedCommand.indexCount, drawIndexedCommand.instanceCount,
+                        drawIndexedCommand.firstIndex, drawIndexedCommand.baseVertex,
+                        drawIndexedCommand.firstInstance);
+                    break;
+                }
+
+                case CommandID::SetIndexBuffer:
+                {
+                    const SetIndexBufferCommand &setIndexBufferCommand =
+                        GetCommandAndIterate<CommandID::SetIndexBuffer>(&currentCommand);
+                    encoder.SetIndexBuffer(
+                        *setIndexBufferCommand.buffer, setIndexBufferCommand.format,
+                        setIndexBufferCommand.offset, setIndexBufferCommand.size);
+                    break;
+                }
+
                 case CommandID::SetPipeline:
                 {
                     const SetPipelineCommand &setPiplelineCommand =
                         GetCommandAndIterate<CommandID::SetPipeline>(&currentCommand);
                     encoder.SetPipeline(*setPiplelineCommand.pipeline);
+                    break;
+                }
+
+                case CommandID::SetScissorRect:
+                {
+                    const SetScissorRectCommand &setScissorRectCommand =
+                        GetCommandAndIterate<CommandID::SetScissorRect>(&currentCommand);
+                    encoder.SetScissorRect(setScissorRectCommand.x, setScissorRectCommand.y,
+                                           setScissorRectCommand.width,
+                                           setScissorRectCommand.height);
+                    break;
+                }
+
+                case CommandID::SetViewport:
+                {
+                    const SetViewportCommand &setViewportCommand =
+                        GetCommandAndIterate<CommandID::SetViewport>(&currentCommand);
+                    encoder.SetViewport(setViewportCommand.x, setViewportCommand.y,
+                                        setViewportCommand.width, setViewportCommand.height,
+                                        setViewportCommand.minDepth, setViewportCommand.maxDepth);
+                    break;
+                }
+
+                case CommandID::SetVertexBuffer:
+                {
+                    const SetVertexBufferCommand &setVertexBufferCommand =
+                        GetCommandAndIterate<CommandID::SetVertexBuffer>(&currentCommand);
+                    encoder.SetVertexBuffer(setVertexBufferCommand.slot,
+                                            *setVertexBufferCommand.buffer);
                     break;
                 }
 

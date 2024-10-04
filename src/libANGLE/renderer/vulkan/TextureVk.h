@@ -126,6 +126,19 @@ class TextureVk : public TextureImpl, public angle::ObserverInterface
     angle::Result copyCompressedTexture(const gl::Context *context,
                                         const gl::Texture *source) override;
 
+    angle::Result clearImage(const gl::Context *context,
+                             GLint level,
+                             GLenum format,
+                             GLenum type,
+                             const uint8_t *data) override;
+
+    angle::Result clearSubImage(const gl::Context *context,
+                                GLint level,
+                                const gl::Box &area,
+                                GLenum format,
+                                GLenum type,
+                                const uint8_t *data) override;
+
     angle::Result setStorage(const gl::Context *context,
                              gl::TextureType type,
                              size_t levels,
@@ -350,6 +363,20 @@ class TextureVk : public TextureImpl, public angle::ObserverInterface
     vk::ImageViewHelper &getImageViews() { return mImageView; }
     const vk::ImageViewHelper &getImageViews() const { return mImageView; }
 
+    angle::Result ensureRenderableWithFormat(ContextVk *contextVk,
+                                             const vk::Format &format,
+                                             TextureUpdateResult *updateResultOut);
+    angle::Result ensureRenderableIfCopyTextureCannotTransfer(ContextVk *contextVk,
+                                                              const gl::InternalFormat &dstFormat,
+                                                              bool unpackFlipY,
+                                                              bool unpackPremultiplyAlpha,
+                                                              bool unpackUnmultiplyAlpha,
+                                                              TextureVk *source);
+    angle::Result ensureRenderableIfCopyTexImageCannotTransfer(
+        ContextVk *contextVk,
+        const gl::InternalFormat &internalFormat,
+        gl::Framebuffer *source);
+
     // Redefine a mip level of the texture.  If the new size and format don't match the allocated
     // image, the image may be released.  When redefining a mip of a multi-level image, updates are
     // forced to be staged, as another mip of the image may be bound to a framebuffer.  For example,
@@ -379,6 +406,20 @@ class TextureVk : public TextureImpl, public angle::ObserverInterface
                                   gl::Buffer *unpackBuffer,
                                   const uint8_t *pixels,
                                   const vk::Format &vkFormat);
+
+    // Used to clear a texture to a given value in part or whole.
+    angle::Result clearSubImageImpl(const gl::Context *context,
+                                    GLint level,
+                                    const gl::Box &clearArea,
+                                    GLenum format,
+                                    GLenum type,
+                                    const uint8_t *data);
+
+    angle::Result ensureImageInitializedIfUpdatesNeedStageOrFlush(ContextVk *contextVk,
+                                                                  gl::LevelIndex level,
+                                                                  const vk::Format &vkFormat,
+                                                                  vk::ApplyImageUpdate applyUpdate,
+                                                                  bool usesBufferForUpdate);
 
     angle::Result copyImageDataToBufferAndGetData(ContextVk *contextVk,
                                                   gl::LevelIndex sourceLevelGL,
@@ -529,7 +570,8 @@ class TextureVk : public TextureImpl, public angle::ObserverInterface
 
     ANGLE_INLINE VkImageTiling getTilingMode()
     {
-        return (mImage->valid()) ? mImage->getTilingMode() : VK_IMAGE_TILING_OPTIMAL;
+        return mImage != nullptr && mImage->valid() ? mImage->getTilingMode()
+                                                    : VK_IMAGE_TILING_OPTIMAL;
     }
 
     angle::Result refreshImageViews(ContextVk *contextVk);
