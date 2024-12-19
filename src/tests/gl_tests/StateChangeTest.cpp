@@ -1177,9 +1177,6 @@ TEST_P(StateChangeTestES3, SamplerMetadataUpdateOnSetProgram)
 {
     // http://anglebug.com/40096654
     ANGLE_SKIP_TEST_IF(IsAndroid() && IsOpenGLES());
-    // TODO(anglebug.com/42264029) Appears as though there's something wrong with textureSize on iOS
-    // unrelated to switching programs.
-    ANGLE_SKIP_TEST_IF(IsIOS() && IsOpenGLES());
     GLVertexArray vertexArray;
     glBindVertexArray(vertexArray);
 
@@ -7529,9 +7526,6 @@ TEST_P(RobustBufferAccessWebGL2ValidationStateChangeTest, BindZeroSizeBufferThen
     // Mali does not support robustness now.
     ANGLE_SKIP_TEST_IF(IsARM());
 
-    // TODO(anglebug.com/42264029)
-    ANGLE_SKIP_TEST_IF(IsIOS() && IsOpenGLES());
-
     std::vector<GLubyte> data(48, 1);
 
     ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Passthrough(), essl1_shaders::fs::Red());
@@ -11090,6 +11084,36 @@ void main()
     EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(159, 210, 0, 255), 1);
 
     ASSERT_GL_NO_ERROR();
+}
+
+// Tests value change for MinSampleShadingOES.
+TEST_P(StateChangeTestES31, MinSampleShadingOES)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_sample_shading"));
+    ASSERT_TRUE(IsGLExtensionEnabled("GL_OES_sample_variables"));
+
+    GLfloat value = 0.0f;
+    glEnable(GL_SAMPLE_SHADING_OES);
+    EXPECT_GL_TRUE(glIsEnabled(GL_SAMPLE_SHADING_OES));
+    glGetFloatv(GL_MIN_SAMPLE_SHADING_VALUE_OES, &value);
+    ASSERT_EQ(value, 0);  // initial value should be 0.
+
+    glDisable(GL_SAMPLE_SHADING_OES);
+    glGetFloatv(GL_MIN_SAMPLE_SHADING_VALUE_OES, &value);
+    ASSERT_EQ(value, 0);
+
+    glMinSampleShadingOES(0.5);
+    EXPECT_GL_FALSE(glIsEnabled(GL_SAMPLE_SHADING_OES));
+    glGetFloatv(GL_MIN_SAMPLE_SHADING_VALUE_OES, &value);
+    ASSERT_EQ(value, 0.5);
+
+    glMinSampleShadingOES(1.5);
+    glGetFloatv(GL_MIN_SAMPLE_SHADING_VALUE_OES, &value);
+    ASSERT_EQ(value, 1);  // clamped to 1.
+
+    glMinSampleShadingOES(-0.5);
+    glGetFloatv(GL_MIN_SAMPLE_SHADING_VALUE_OES, &value);
+    ASSERT_EQ(value, 0);  // clamped to 0.
 }
 
 // Tests state changes with uniform block binding.

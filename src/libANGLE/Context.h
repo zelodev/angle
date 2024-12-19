@@ -388,9 +388,13 @@ class StateCache final : angle::NonCopyable
     void updateValidDrawModes(Context *context);
     void updateValidBindTextureTypes(Context *context);
     void updateValidDrawElementsTypes(Context *context);
-    void updateBasicDrawStatesError();
-    void updateProgramPipelineError();
-    void updateBasicDrawElementsError();
+    void updateBasicDrawStatesError()
+    {
+        mCachedBasicDrawStatesErrorString = kInvalidPointer;
+        mCachedBasicDrawStatesErrorCode   = GL_NO_ERROR;
+    }
+    void updateProgramPipelineError() { mCachedProgramPipelineError = kInvalidPointer; }
+    void updateBasicDrawElementsError() { mCachedBasicDrawElementsError = kInvalidPointer; }
     void updateTransformFeedbackActiveUnpaused(Context *context);
     void updateVertexAttribTypesValidation(Context *context);
     void updateActiveShaderStorageBufferIndices(Context *context);
@@ -823,7 +827,11 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     const angle::PerfMonitorCounterGroups &getPerfMonitorCounterGroups() const;
 
     // Ends the currently active pixel local storage session with GL_STORE_OP_STORE on all planes.
-    void endPixelLocalStorageWithStoreOpsStore();
+    void endPixelLocalStorageImplicit();
+
+    bool areBlobCacheFuncsSet() const;
+
+    size_t getMemoryUsage() const;
 
   private:
     void initializeDefaultResources();
@@ -863,6 +871,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     egl::Error unsetDefaultFramebuffer();
 
     void initRendererString();
+    void initVendorString();
     void initVersionStrings();
     void initExtensionStrings();
 
@@ -926,6 +935,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     TransformFeedbackMap mTransformFeedbackMap;
     HandleAllocator mTransformFeedbackHandleAllocator;
 
+    const char *mVendorString;
     const char *mVersionString;
     const char *mShadingLanguageString;
     const char *mRendererString;

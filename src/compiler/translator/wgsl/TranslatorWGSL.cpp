@@ -22,7 +22,6 @@
 #include "compiler/translator/StaticType.h"
 #include "compiler/translator/SymbolUniqueId.h"
 #include "compiler/translator/Types.h"
-#include "compiler/translator/tree_ops/SeparateCompoundStructDeclarations.h"
 #include "compiler/translator/tree_util/BuiltIn_autogen.h"
 #include "compiler/translator/tree_util/FindMain.h"
 #include "compiler/translator/tree_util/IntermNode_util.h"
@@ -109,7 +108,9 @@ bool NewlinePad(TIntermNode &node)
 class OutputWGSLTraverser : public TIntermTraverser
 {
   public:
-    OutputWGSLTraverser(TCompiler *compiler, RewritePipelineVarOutput *rewritePipelineVarOutput);
+    OutputWGSLTraverser(TCompiler *compiler,
+                        RewritePipelineVarOutput *rewritePipelineVarOutput,
+                        UniformBlockMetadata *uniformBlockMetadata);
     ~OutputWGSLTraverser() override;
 
   protected:
@@ -170,16 +171,19 @@ class OutputWGSLTraverser : public TIntermTraverser
 
     TInfoSinkBase &mSink;
     RewritePipelineVarOutput *mRewritePipelineVarOutput;
+    UniformBlockMetadata *mUniformBlockMetadata;
 
     int mIndentLevel        = -1;
     int mLastIndentationPos = -1;
 };
 
 OutputWGSLTraverser::OutputWGSLTraverser(TCompiler *compiler,
-                                         RewritePipelineVarOutput *rewritePipelineVarOutput)
+                                         RewritePipelineVarOutput *rewritePipelineVarOutput,
+                                         UniformBlockMetadata *uniformBlockMetadata)
     : TIntermTraverser(true, false, false),
       mSink(compiler->getInfoSink().obj),
-      mRewritePipelineVarOutput(rewritePipelineVarOutput)
+      mRewritePipelineVarOutput(rewritePipelineVarOutput),
+      mUniformBlockMetadata(uniformBlockMetadata)
 {}
 
 OutputWGSLTraverser::~OutputWGSLTraverser() = default;
@@ -1490,10 +1494,36 @@ void OutputWGSLTraverser::emitStructDeclaration(const TType &type)
     emitOpenBrace();
 
     const TStructure &structure = *type.getStruct();
+    bool isInUniformAddressSpace =
+        mUniformBlockMetadata->structsInUniformAddressSpace.count(structure.uniqueId().get()) != 0;
 
+    bool alignTo16InUniformAddressSpace = true;
     for (const TField *field : structure.fields())
     {
         emitIndentation();
+        // If this struct is used in the uniform address space, it must obey the uniform address
+        // space's layout constaints (https://www.w3.org/TR/WGSL/#address-space-layout-constraints).
+        // WGSL's address space layout constraints nearly match std140, and the places they don't
+        // are handled elsewhere.
+        if (isInUniformAddressSpace)
+        {
+            // Here, the field must be aligned to 16 if:
+            // 1. The field is a struct or array
+            // 2. The previous field is a struct
+            // 3. The field is the first in the struct (for convenience).
+            if (field->type()->getStruct() || field->type()->isArray())
+            {
+                alignTo16InUniformAddressSpace = true;
+            }
+            if (alignTo16InUniformAddressSpace)
+            {
+                mSink << "@align(16) ";
+            }
+
+            // If this field is a struct, the next member should be aligned to 16.
+            alignTo16InUniformAddressSpace = field->type()->getStruct();
+        }
+
         // TODO(anglebug.com/42267100): emit qualifiers.
         EmitVariableDeclarationConfig evdConfig;
         evdConfig.disableStructSpecifier = true;
@@ -1793,20 +1823,6 @@ bool TranslatorWGSL::translate(TIntermBlock *root,
         std::cout << getInfoSink().info.c_str();
     }
 
-    {
-        int uniqueStructId = 0;
-        if (!SeparateCompoundStructDeclarations(
-                *this,
-                [&uniqueStructId]() {
-                    return BuildConcatenatedImmutableString("ANGLE_unnamed_struct_",
-                                                            uniqueStructId++);
-                },
-                *root))
-        {
-            return false;
-        }
-    }
-
     RewritePipelineVarOutput rewritePipelineVarOutput(getShaderType());
 
     // WGSL's main() will need to take parameters or return values if any glsl (input/output)
@@ -1828,8 +1844,14 @@ bool TranslatorWGSL::translate(TIntermBlock *root,
         return false;
     }
 
+    UniformBlockMetadata uniformBlockMetadata;
+    if (!RecordUniformBlockMetadata(root, uniformBlockMetadata))
+    {
+        return false;
+    }
+
     // Write the body of the WGSL including the GLSL main() function.
-    OutputWGSLTraverser traverser(this, &rewritePipelineVarOutput);
+    OutputWGSLTraverser traverser(this, &rewritePipelineVarOutput, &uniformBlockMetadata);
     root->traverse(&traverser);
 
     // Write the actual WGSL main function, wgslMain(), which calls the GLSL main function.

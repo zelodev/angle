@@ -10,13 +10,13 @@
 #include "common/system_utils.h"
 #include "compiler/translator/BaseTypes.h"
 #include "compiler/translator/ImmutableStringBuilder.h"
+#include "compiler/translator/Name.h"
 #include "compiler/translator/OutputTree.h"
 #include "compiler/translator/SymbolTable.h"
 #include "compiler/translator/msl/AstHelpers.h"
 #include "compiler/translator/msl/DebugSink.h"
 #include "compiler/translator/msl/EmitMetal.h"
 #include "compiler/translator/msl/Layout.h"
-#include "compiler/translator/msl/Name.h"
 #include "compiler/translator/msl/ProgramPrelude.h"
 #include "compiler/translator/msl/RewritePipelines.h"
 #include "compiler/translator/msl/TranslatorMSL.h"
@@ -1035,7 +1035,7 @@ void GenMetalTraverser::emitType(const TType &type, const EmitTypeConfig &etConf
         {
             if (type.isArray())
             {
-                mOut << "ANGLE_tensor<";
+                mOut << "metal::array<";
             }
         }
         if (evdConfig.isPointer)
@@ -1054,7 +1054,7 @@ void GenMetalTraverser::emitType(const TType &type, const EmitTypeConfig &etConf
     {
         if (type.isArray())
         {
-            mOut << "ANGLE_tensor<";
+            mOut << "metal::array<";
         }
     }
 

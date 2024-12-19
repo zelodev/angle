@@ -474,6 +474,11 @@ class PrivateState : angle::NonCopyable
     // GL_ANGLE_shader_pixel_local_storage
     void setPixelLocalStorageActivePlanes(GLsizei n);
     GLsizei getPixelLocalStorageActivePlanes() const { return mPixelLocalStorageActivePlanes; }
+    // While pixel local storage is active, some draw buffers may be reserved for internal use by
+    // PLS and blocked from the client. All draw buffers at or beyond 'firstActivePLSDrawBuffer' are
+    // overridden.
+    bool hasActivelyOverriddenPLSDrawBuffers(GLint *firstActivePLSDrawBuffer) const;
+    bool isActivelyOverriddenPLSDrawBuffer(GLint drawbuffer) const;
 
     // Line width state setter
     void setLineWidth(GLfloat width);
@@ -564,6 +569,10 @@ class PrivateState : angle::NonCopyable
     // Debug state
     const Debug &getDebug() const { return mDebug; }
     Debug &getDebug() { return mDebug; }
+
+    // GL_ANGLE_blob_cache
+    const BlobCacheCallbacks &getBlobCacheCallbacks() const { return mBlobCacheCallbacks; }
+    BlobCacheCallbacks &getBlobCacheCallbacks() { return mBlobCacheCallbacks; }
 
     // Generic state toggle & query
     void setEnableFeature(GLenum feature, bool enabled);
@@ -744,6 +753,9 @@ class PrivateState : angle::NonCopyable
 
     Debug mDebug;
 
+    // ANGLE_blob_cache
+    BlobCacheCallbacks mBlobCacheCallbacks;
+
     state::DirtyBits mDirtyBits;
     state::ExtendedDirtyBits mExtendedDirtyBits;
     state::DirtyObjects mDirtyObjects;
@@ -812,7 +824,10 @@ class State : angle::NonCopyable
 
     // Texture binding & active texture unit manipulation
     void setSamplerTexture(const Context *context, TextureType type, Texture *texture);
-    Texture *getTargetTexture(TextureType type) const;
+    Texture *getTargetTexture(TextureType type) const
+    {
+        return getSamplerTexture(getActiveSampler(), type);
+    }
 
     Texture *getSamplerTexture(unsigned int sampler, TextureType type) const
     {
@@ -1423,6 +1438,11 @@ class State : angle::NonCopyable
     bool isPerfMonitorActive() const { return mPrivateState.isPerfMonitorActive(); }
     const Debug &getDebug() const { return mPrivateState.getDebug(); }
     Debug &getDebug() { return mPrivateState.getDebug(); }
+    const BlobCacheCallbacks &getBlobCacheCallbacks() const
+    {
+        return mPrivateState.getBlobCacheCallbacks();
+    }
+    BlobCacheCallbacks &getBlobCacheCallbacks() { return mPrivateState.getBlobCacheCallbacks(); }
     bool getEnableFeature(GLenum feature) const { return mPrivateState.getEnableFeature(feature); }
     bool getEnableFeatureIndexed(GLenum feature, GLuint index) const
     {

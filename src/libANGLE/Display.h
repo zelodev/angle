@@ -33,10 +33,10 @@
 #include "platform/Feature.h"
 #include "platform/autogen/FrontendFeatures_autogen.h"
 
-// Only DisplayCGL and DisplayEAGL need to be notified about an EGL call about to be made to prepare
+// Only DisplayCGL needs to be notified about an EGL call about to be made to prepare
 // per-thread data. Disable Display::prepareForCall on other platforms for performance.
 #if !defined(ANGLE_USE_DISPLAY_PREPARE_FOR_CALL)
-#    if ANGLE_ENABLE_CGL || ANGLE_ENABLE_EAGL
+#    if ANGLE_ENABLE_CGL
 #        define ANGLE_USE_DISPLAY_PREPARE_FOR_CALL 1
 #    else
 #        define ANGLE_USE_DISPLAY_PREPARE_FOR_CALL 0
@@ -82,6 +82,7 @@ struct DisplayState final : private angle::NonCopyable
 
     EGLLabelKHR label;
     ContextMap contextMap;
+    mutable angle::SimpleMutex contextMapMutex;
     SurfaceMap surfaceMap;
     angle::FeatureOverrides featureOverrides;
     EGLNativeDisplayType displayId;
@@ -312,6 +313,12 @@ class Display final : public LabeledObject,
                                EGLBoolean *external_only,
                                EGLint *num_modifiers);
 
+    Error querySupportedCompressionRates(const Config *configuration,
+                                         const AttributeMap &attributes,
+                                         EGLint *rates,
+                                         EGLint rate_size,
+                                         EGLint *num_rates) const;
+
     std::shared_ptr<angle::WorkerThreadPool> getSingleThreadPool() const
     {
         return mState.singleThreadPool;
@@ -354,7 +361,8 @@ class Display final : public LabeledObject,
 
     Error restoreLostDevice();
     Error releaseContext(gl::Context *context, Thread *thread);
-    Error releaseContextImpl(gl::Context *context, ContextMap *contexts);
+    Error releaseContextImpl(std::unique_ptr<gl::Context> &&context);
+    std::unique_ptr<gl::Context> eraseContextImpl(gl::Context *context, ContextMap *contexts);
 
     void initDisplayExtensions();
     void initVendorString();

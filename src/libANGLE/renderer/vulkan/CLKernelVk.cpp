@@ -17,6 +17,7 @@
 #include "libANGLE/CLKernel.h"
 #include "libANGLE/CLProgram.h"
 #include "libANGLE/cl_utils.h"
+#include "spirv/unified1/NonSemanticClspvReflection.h"
 
 namespace rx
 {
@@ -34,10 +35,6 @@ CLKernelVk::CLKernelVk(const cl::Kernel &kernel,
 {
     mShaderProgramHelper.setShader(gl::ShaderType::Compute,
                                    mKernel.getProgram().getImpl<CLProgramVk>().getShaderModule());
-    for (DescriptorSetIndex index : angle::AllEnums<DescriptorSetIndex>())
-    {
-        mDescriptorSets[index] = VK_NULL_HANDLE;
-    }
 }
 
 CLKernelVk::~CLKernelVk()
@@ -81,11 +78,37 @@ angle::Result CLKernelVk::init()
                     pcRange.size = arg.pushConstOffset + arg.pushConstantSize - pcRange.offset;
                 }
                 continue;
+            case NonSemanticClspvReflectionArgumentSampledImage:
+                descType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                break;
+            case NonSemanticClspvReflectionArgumentStorageImage:
+                descType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                break;
+            case NonSemanticClspvReflectionArgumentSampler:
+                descType = VK_DESCRIPTOR_TYPE_SAMPLER;
+                break;
+            case NonSemanticClspvReflectionArgumentStorageTexelBuffer:
+                descType = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+                break;
+            case NonSemanticClspvReflectionArgumentUniformTexelBuffer:
+                descType = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
+                break;
             default:
                 continue;
         }
-        descriptorSetLayoutDesc.addBinding(arg.descriptorBinding, descType, 1,
-                                           VK_SHADER_STAGE_COMPUTE_BIT, nullptr);
+        if (descType != VK_DESCRIPTOR_TYPE_MAX_ENUM)
+        {
+            descriptorSetLayoutDesc.addBinding(arg.descriptorBinding, descType, 1,
+                                               VK_SHADER_STAGE_COMPUTE_BIT, nullptr);
+        }
+    }
+
+    if (usesPrintf())
+    {
+        mDescriptorSetLayoutDescs[DescriptorSetIndex::Printf].addBinding(
+            mProgram->getDeviceProgramData(mName.c_str())
+                ->reflectionData.printfBufferStorage.binding,
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr);
     }
 
     // Get pipeline layout from cache (creates if missed)
@@ -104,8 +127,12 @@ angle::Result CLKernelVk::init()
     // push constant setup
     // push constant size must be multiple of 4
     pcRange.size = roundUpPow2(pcRange.size, 4u);
+    // set the pod arguments data to this size
+    mPodArgumentsData.resize(pcRange.size);
+
     // push constant offset must be multiple of 4, round down to ensure this
     pcRange.offset = roundDownPow2(pcRange.offset, 4u);
+
     mPipelineLayoutDesc.updatePushConstantRange(pcRange.stageFlags, pcRange.offset, pcRange.size);
 
     return angle::Result::Continue;
@@ -118,6 +145,14 @@ angle::Result CLKernelVk::setArg(cl_uint argIndex, size_t argSize, const void *a
     {
         arg.handle     = const_cast<void *>(argValue);
         arg.handleSize = argSize;
+
+        // For POD data, copy the contents as the app is free to delete the contents post this call.
+        if (arg.type == NonSemanticClspvReflectionArgumentPodPushConstant && argSize > 0 &&
+            argValue != nullptr)
+        {
+            ASSERT(mPodArgumentsData.size() >= arg.pushConstantSize + arg.pushConstOffset);
+            memcpy(&mPodArgumentsData[arg.pushConstOffset], argValue, argSize);
+        }
 
         if (arg.type == NonSemanticClspvReflectionArgumentWorkgroup)
         {
@@ -279,9 +314,23 @@ angle::Result CLKernelVk::getOrCreateComputePipeline(vk::PipelineCacheAccess *pi
 
     // Now get or create (on compute pipeline cache miss) compute pipeline and return it
     return mShaderProgramHelper.getOrCreateComputePipeline(
-        mContext, &mComputePipelineCache, pipelineCache, getPipelineLayout().get(),
+        mContext, &mComputePipelineCache, pipelineCache, getPipelineLayout(),
         vk::ComputePipelineOptions{}, PipelineSource::Draw, pipelineOut, mName.c_str(),
         &computeSpecializationInfo);
 }
 
+bool CLKernelVk::usesPrintf() const
+{
+    return mProgram->getDeviceProgramData(mName.c_str())->getKernelFlags(mName) &
+           NonSemanticClspvReflectionMayUsePrintf;
+}
+
+angle::Result CLKernelVk::allocateDescriptorSet(
+    DescriptorSetIndex index,
+    angle::EnumIterator<DescriptorSetIndex> layoutIndex,
+    vk::OutsideRenderPassCommandBufferHelper *computePassCommands)
+{
+    return mProgram->allocateDescriptorSet(index, *mDescriptorSetLayouts[*layoutIndex],
+                                           computePassCommands, &mDescriptorSets[index]);
+}
 }  // namespace rx

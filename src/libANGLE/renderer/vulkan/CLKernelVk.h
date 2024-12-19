@@ -93,7 +93,13 @@ class CLKernelVk : public CLKernelImpl
     CLProgramVk *getProgram() { return mProgram; }
     const std::string &getKernelName() { return mName; }
     const CLKernelArguments &getArgs() { return mArgs; }
-    vk::AtomicBindingPointer<vk::PipelineLayout> &getPipelineLayout() { return mPipelineLayout; }
+    angle::Result initPipelineLayout()
+    {
+        PipelineLayoutCache *pipelineLayoutCache = mContext->getPipelineLayoutCache();
+        return pipelineLayoutCache->getPipelineLayout(mContext, mPipelineLayoutDesc,
+                                                      mDescriptorSetLayouts, &mPipelineLayout);
+    }
+    const vk::PipelineLayout &getPipelineLayout() const { return *mPipelineLayout; }
     vk::DescriptorSetLayoutPointerArray &getDescriptorSetLayouts() { return mDescriptorSetLayouts; }
     cl::Kernel &getFrontendObject() { return const_cast<cl::Kernel &>(mKernel); }
 
@@ -122,7 +128,19 @@ class CLKernelVk : public CLKernelImpl
 
     const vk::PipelineLayoutDesc &getPipelineLayoutDesc() { return mPipelineLayoutDesc; }
 
-    VkDescriptorSet &getDescriptorSet(DescriptorSetIndex index) { return mDescriptorSets[index]; }
+    VkDescriptorSet getDescriptorSet(DescriptorSetIndex index)
+    {
+        return mDescriptorSets[index]->getDescriptorSet();
+    }
+
+    std::vector<uint8_t> &getPodArgumentsData() { return mPodArgumentsData; }
+
+    bool usesPrintf() const;
+
+    angle::Result allocateDescriptorSet(
+        DescriptorSetIndex index,
+        angle::EnumIterator<DescriptorSetIndex> layoutIndex,
+        vk::OutsideRenderPassCommandBufferHelper *computePassCommands);
 
   private:
     static constexpr std::array<size_t, 3> kEmptyWorkgroupSize = {0, 0, 0};
@@ -132,13 +150,17 @@ class CLKernelVk : public CLKernelImpl
     std::string mName;
     std::string mAttributes;
     CLKernelArguments mArgs;
+
+    // Copy of the pod data
+    std::vector<uint8_t> mPodArgumentsData;
+
     vk::ShaderProgramHelper mShaderProgramHelper;
     vk::ComputePipelineCache mComputePipelineCache;
     KernelSpecConstants mSpecConstants;
-    vk::AtomicBindingPointer<vk::PipelineLayout> mPipelineLayout;
+    vk::PipelineLayoutPtr mPipelineLayout;
     vk::DescriptorSetLayoutPointerArray mDescriptorSetLayouts{};
 
-    vk::DescriptorSetArray<VkDescriptorSet> mDescriptorSets;
+    vk::DescriptorSetArray<vk::DescriptorSetPointer> mDescriptorSets;
 
     vk::DescriptorSetArray<vk::DescriptorSetLayoutDesc> mDescriptorSetLayoutDescs;
     vk::PipelineLayoutDesc mPipelineLayoutDesc;

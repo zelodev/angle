@@ -462,6 +462,8 @@ spv::StorageClass GetStorageClass(const ShCompileOptions &compileOptions,
         case EvqViewIDOVR:
         case EvqLayerIn:
         case EvqLastFragColor:
+        case EvqLastFragDepth:
+        case EvqLastFragStencil:
             return spv::StorageClassInput;
 
         case EvqPosition:
@@ -1034,9 +1036,6 @@ spirv::IdRef OutputSPIRVTraverser::accessChainLoad(NodeData *data,
 
     if (accessChain.dynamicComponent.valid())
     {
-        // Dynamic component in combination with swizzle is already folded.
-        ASSERT(accessChain.swizzles.empty());
-
         // Use OpVectorExtractDynamic to select the component.
         const spirv::IdRef result = mBuilder.getNewId(decorations);
         spirv::WriteVectorExtractDynamic(mBuilder.getSpirvCurrentFunctionBlock(),
@@ -2334,7 +2333,7 @@ spirv::IdRef OutputSPIRVTraverser::visitOperator(TIntermOperator *node, spirv::I
 
     const TType &firstOperandType = firstChild->getType();
     const TBasicType basicType    = firstOperandType.getBasicType();
-    const bool isFloat            = basicType == EbtFloat || basicType == EbtDouble;
+    const bool isFloat            = basicType == EbtFloat;
     const bool isUnsigned         = basicType == EbtUInt;
     const bool isBool             = basicType == EbtBool;
     // Whether this is a pre/post increment/decrement operator.
@@ -4485,7 +4484,7 @@ void OutputSPIRVTraverser::createCompareImpl(TOperator op,
                                              spirv::IdRefList *intermediateResultsOut)
 {
     const TBasicType basicType = operandType.getBasicType();
-    const bool isFloat         = basicType == EbtFloat || basicType == EbtDouble;
+    const bool isFloat         = basicType == EbtFloat;
     const bool isBool          = basicType == EbtBool;
 
     WriteBinaryOp writeBinaryOp = nullptr;

@@ -619,11 +619,6 @@ VkResult AllocateBufferMemoryWithRequirements(Context *context,
                                               uint32_t *memoryTypeIndexOut,
                                               DeviceMemory *deviceMemoryOut);
 
-angle::Result InitShaderModule(Context *context,
-                               ShaderModule *shaderModule,
-                               const uint32_t *shaderCode,
-                               size_t shaderCodeSize);
-
 gl::TextureType Get2DTextureType(uint32_t layerCount, GLint samples);
 
 enum class RecordingMode
@@ -710,6 +705,9 @@ class RefCounted : angle::NonCopyable
 {
   public:
     RefCounted() : mRefCount(0) {}
+    template <class... Args>
+    explicit RefCounted(Args &&...args) : mRefCount(0), mObject(std::forward<Args>(args)...)
+    {}
     explicit RefCounted(T &&newObject) : mRefCount(0), mObject(std::move(newObject)) {}
     ~RefCounted() { ASSERT(mRefCount == 0 && !mObject.valid()); }
 
@@ -745,6 +743,8 @@ class RefCounted : angle::NonCopyable
     }
 
     bool isReferenced() const { return mRefCount != 0; }
+    uint32_t getRefCount() const { return mRefCount; }
+    bool isLastReferenceCount() const { return mRefCount == 1; }
 
     T &get() { return mObject; }
     const T &get() const { return mObject; }
@@ -791,9 +791,33 @@ class AtomicRefCounted : angle::NonCopyable
         return mRefCount.fetch_sub(1, std::memory_order_acq_rel);
     }
 
+    // Making decisions based on reference count is not thread safe, so it should not used in
+    // release build.
+#if defined(ANGLE_ENABLE_ASSERTS)
     // Warning: method does not perform any synchronization.  See `releaseRef()` for details.
     // Method may be only used after external synchronization.
     bool isReferenced() const { return mRefCount.load(std::memory_order_relaxed) != 0; }
+    uint32_t getRefCount() const { return mRefCount.load(std::memory_order_relaxed); }
+    // This is used by SharedPtr::unique, so needs strong ordering.
+    bool isLastReferenceCount() const { return mRefCount.load(std::memory_order_acquire) == 1; }
+#else
+    // Compiler still compile but should never actually produce code.
+    bool isReferenced() const
+    {
+        UNREACHABLE();
+        return false;
+    }
+    uint32_t getRefCount() const
+    {
+        UNREACHABLE();
+        return 0;
+    }
+    bool isLastReferenceCount() const
+    {
+        UNREACHABLE();
+        return false;
+    }
+#endif
 
     T &get() { return mObject; }
     const T &get() const { return mObject; }
@@ -803,48 +827,187 @@ class AtomicRefCounted : angle::NonCopyable
     T mObject;
 };
 
-template <typename T, typename RC = RefCounted<T>>
-class BindingPointer final : angle::NonCopyable
+// This is intended to have same interface as std::shared_ptr except this must used in thread safe
+// environment.
+template <typename>
+class WeakPtr;
+template <typename T, class RefCountedStorage = RefCounted<T>>
+class SharedPtr final
 {
   public:
-    BindingPointer() = default;
-    ~BindingPointer() { reset(); }
-
-    BindingPointer(BindingPointer &&other) : mRefCounted(other.mRefCounted)
+    SharedPtr() : mRefCounted(nullptr), mDevice(VK_NULL_HANDLE) {}
+    SharedPtr(VkDevice device, T &&object) : mDevice(device)
     {
-        other.mRefCounted = nullptr;
+        mRefCounted = new RefCountedStorage(std::move(object));
+        mRefCounted->addRef();
     }
-
-    void set(RC *refCounted)
+    SharedPtr(VkDevice device, const WeakPtr<T> &other)
+        : mRefCounted(other.mRefCounted), mDevice(device)
     {
         if (mRefCounted)
         {
-            mRefCounted->releaseRef();
+            // There must already have another SharedPtr holding onto the underline object when
+            // WeakPtr is valid.
+            ASSERT(mRefCounted->isReferenced());
+            mRefCounted->addRef();
         }
+    }
+    ~SharedPtr() { reset(); }
 
-        mRefCounted = refCounted;
+    SharedPtr(const SharedPtr &other) : mRefCounted(nullptr), mDevice(VK_NULL_HANDLE)
+    {
+        *this = other;
+    }
 
+    SharedPtr(SharedPtr &&other) : mRefCounted(nullptr), mDevice(VK_NULL_HANDLE)
+    {
+        *this = std::move(other);
+    }
+
+    template <class... Args>
+    static SharedPtr<T, RefCountedStorage> MakeShared(VkDevice device, Args &&...args)
+    {
+        SharedPtr<T, RefCountedStorage> newObject;
+        newObject.mRefCounted = new RefCountedStorage(std::forward<Args>(args)...);
+        newObject.mRefCounted->addRef();
+        newObject.mDevice = device;
+        return newObject;
+    }
+
+    void reset()
+    {
+        if (mRefCounted)
+        {
+            releaseRef();
+            mRefCounted = nullptr;
+            mDevice     = VK_NULL_HANDLE;
+        }
+    }
+
+    SharedPtr &operator=(SharedPtr &&other)
+    {
+        if (mRefCounted)
+        {
+            releaseRef();
+        }
+        mRefCounted       = other.mRefCounted;
+        mDevice           = other.mDevice;
+        other.mRefCounted = nullptr;
+        other.mDevice     = VK_NULL_HANDLE;
+        return *this;
+    }
+
+    SharedPtr &operator=(const SharedPtr &other)
+    {
+        if (mRefCounted)
+        {
+            releaseRef();
+        }
+        mRefCounted = other.mRefCounted;
+        mDevice     = other.mDevice;
         if (mRefCounted)
         {
             mRefCounted->addRef();
         }
+        return *this;
     }
 
-    void reset() { set(nullptr); }
+    operator bool() const { return mRefCounted != nullptr; }
 
-    T &get() { return mRefCounted->get(); }
-    const T &get() const { return mRefCounted->get(); }
+    T &operator*() const
+    {
+        ASSERT(mRefCounted != nullptr);
+        return mRefCounted->get();
+    }
 
-    bool valid() const { return mRefCounted != nullptr; }
+    T *operator->() const { return get(); }
 
-    RC *getRefCounted() { return mRefCounted; }
+    T *get() const
+    {
+        ASSERT(mRefCounted != nullptr);
+        return &mRefCounted->get();
+    }
+
+    bool unique() const
+    {
+        ASSERT(mRefCounted != nullptr);
+        return mRefCounted->isLastReferenceCount();
+    }
+
+    bool owner_equal(const SharedPtr<T> &other) const { return mRefCounted == other.mRefCounted; }
+
+    uint32_t getRefCount() const { return mRefCounted->getRefCount(); }
 
   private:
-    RC *mRefCounted = nullptr;
+    void releaseRef()
+    {
+        ASSERT(mRefCounted != nullptr);
+        unsigned int refCount = mRefCounted->getAndReleaseRef();
+        if (refCount == 1)
+        {
+            mRefCounted->get().destroy(mDevice);
+            SafeDelete(mRefCounted);
+        }
+    }
+
+    friend class WeakPtr<T>;
+    RefCountedStorage *mRefCounted;
+    VkDevice mDevice;
 };
 
 template <typename T>
-using AtomicBindingPointer = BindingPointer<T, AtomicRefCounted<T>>;
+using AtomicSharedPtr = SharedPtr<T, AtomicRefCounted<T>>;
+
+// This is intended to have same interface as std::weak_ptr
+template <typename T>
+class WeakPtr final
+{
+  public:
+    using RefCountedStorage = RefCounted<T>;
+
+    WeakPtr() : mRefCounted(nullptr) {}
+
+    WeakPtr(const SharedPtr<T> &other) : mRefCounted(other.mRefCounted) {}
+
+    void reset() { mRefCounted = nullptr; }
+
+    operator bool() const
+    {
+        // There must have another SharedPtr holding onto the underline object when WeakPtr is
+        // valid.
+        ASSERT(mRefCounted == nullptr || mRefCounted->isReferenced());
+        return mRefCounted != nullptr;
+    }
+
+    T *operator->() const { return get(); }
+
+    T *get() const
+    {
+        ASSERT(mRefCounted != nullptr);
+        ASSERT(mRefCounted->isReferenced());
+        return &mRefCounted->get();
+    }
+
+    long use_count() const
+    {
+        ASSERT(mRefCounted != nullptr);
+        // There must have another SharedPtr holding onto the underline object when WeakPtr is
+        // valid.
+        ASSERT(mRefCounted->isReferenced());
+        return mRefCounted->getRefCount();
+    }
+    bool owner_equal(const SharedPtr<T> &other) const
+    {
+        // There must have another SharedPtr holding onto the underlying object when WeakPtr is
+        // valid.
+        ASSERT(mRefCounted == nullptr || mRefCounted->isReferenced());
+        return mRefCounted == other.mRefCounted;
+    }
+
+  private:
+    friend class SharedPtr<T>;
+    RefCountedStorage *mRefCounted;
+};
 
 // Helper class to share ref-counted Vulkan objects.  Requires that T have a destroy method
 // that takes a VkDevice and returns void.
@@ -1024,8 +1187,13 @@ ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
 template <typename T>
 using SpecializationConstantMap = angle::PackedEnumMap<sh::vk::SpecializationConstantId, T>;
 
-using ShaderModulePointer = BindingPointer<ShaderModule>;
-using ShaderModuleMap     = gl::ShaderMap<ShaderModulePointer>;
+using ShaderModulePtr = SharedPtr<ShaderModule>;
+using ShaderModuleMap = gl::ShaderMap<ShaderModulePtr>;
+
+angle::Result InitShaderModule(Context *context,
+                               ShaderModulePtr *shaderModulePtr,
+                               const uint32_t *shaderCode,
+                               size_t shaderCodeSize);
 
 void MakeDebugUtilsLabel(GLenum source, const char *marker, VkDebugUtilsLabelEXT *label);
 
@@ -1268,7 +1436,11 @@ GLenum CalculateGenerateMipmapFilter(ContextVk *contextVk, angle::FormatID forma
 
 namespace gl_vk
 {
-VkRect2D GetRect(const gl::Rectangle &source);
+inline VkRect2D GetRect(const gl::Rectangle &source)
+{
+    return {{source.x, source.y},
+            {static_cast<uint32_t>(source.width), static_cast<uint32_t>(source.height)}};
+}
 VkFilter GetFilter(const GLenum filter);
 VkSamplerMipmapMode GetSamplerMipmapMode(const GLenum filter);
 VkSamplerAddressMode GetSamplerAddressMode(const GLenum wrap);
@@ -1315,6 +1487,9 @@ vk::LevelIndex GetLevelIndex(gl::LevelIndex levelGL, gl::LevelIndex baseLevel);
 
 VkImageTiling GetTilingMode(gl::TilingMode tilingMode);
 
+VkImageCompressionFixedRateFlagsEXT ConvertEGLFixedRateToVkFixedRate(
+    const EGLenum eglCompressionRate,
+    const angle::FormatID actualFormatID);
 }  // namespace gl_vk
 
 namespace vk_gl
@@ -1341,6 +1516,18 @@ GLuint GetMaxSampleCount(VkSampleCountFlags sampleCounts);
 GLuint GetSampleCount(VkSampleCountFlags supportedCounts, GLuint requestedCount);
 
 gl::LevelIndex GetLevelIndex(vk::LevelIndex levelVk, gl::LevelIndex baseLevel);
+
+GLenum ConvertVkFixedRateToGLFixedRate(const VkImageCompressionFixedRateFlagsEXT vkCompressionRate);
+GLint ConvertCompressionFlagsToGLFixedRates(
+    VkImageCompressionFixedRateFlagsEXT imageCompressionFixedRateFlags,
+    GLsizei bufSize,
+    GLint *rates);
+
+EGLenum ConvertVkFixedRateToEGLFixedRate(
+    const VkImageCompressionFixedRateFlagsEXT vkCompressionRate);
+std::vector<EGLint> ConvertCompressionFlagsToEGLFixedRate(
+    VkImageCompressionFixedRateFlagsEXT imageCompressionFixedRateFlags,
+    size_t rateSize);
 }  // namespace vk_gl
 
 enum class RenderPassClosureReason
@@ -1412,6 +1599,7 @@ enum class RenderPassClosureReason
     OutOfReservedQueueSerialForOutsideCommands,
 
     // UtilsVk
+    GenerateMipmapWithDraw,
     PrepareForBlit,
     PrepareForImageCopy,
     TemporaryForClearTexture,

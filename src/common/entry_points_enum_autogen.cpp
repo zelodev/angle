@@ -412,6 +412,8 @@ const char *GetEntryPointName(EntryPoint ep)
             return "eglQueryString";
         case EntryPoint::EGLQueryStringiANGLE:
             return "eglQueryStringiANGLE";
+        case EntryPoint::EGLQuerySupportedCompressionRatesEXT:
+            return "eglQuerySupportedCompressionRatesEXT";
         case EntryPoint::EGLQuerySurface:
             return "eglQuerySurface";
         case EntryPoint::EGLQuerySurface64KHR:
@@ -548,6 +550,8 @@ const char *GetEntryPointName(EntryPoint ep)
             return "glBlendColor";
         case EntryPoint::GLBlendEquation:
             return "glBlendEquation";
+        case EntryPoint::GLBlendEquationOES:
+            return "glBlendEquationOES";
         case EntryPoint::GLBlendEquationSeparate:
             return "glBlendEquationSeparate";
         case EntryPoint::GLBlendEquationSeparatei:
@@ -584,6 +588,8 @@ const char *GetEntryPointName(EntryPoint ep)
             return "glBlitFramebufferANGLE";
         case EntryPoint::GLBlitFramebufferNV:
             return "glBlitFramebufferNV";
+        case EntryPoint::GLBlobCacheCallbacksANGLE:
+            return "glBlobCacheCallbacksANGLE";
         case EntryPoint::GLBufferData:
             return "glBufferData";
         case EntryPoint::GLBufferStorageEXT:
@@ -1158,6 +1164,8 @@ const char *GetEntryPointName(EntryPoint ep)
             return "glGetPerfMonitorGroupsAMD";
         case EntryPoint::GLGetPointerv:
             return "glGetPointerv";
+        case EntryPoint::GLGetPointervANGLE:
+            return "glGetPointervANGLE";
         case EntryPoint::GLGetPointervKHR:
             return "glGetPointervKHR";
         case EntryPoint::GLGetPointervRobustANGLERobustANGLE:
@@ -1982,6 +1990,10 @@ const char *GetEntryPointName(EntryPoint ep)
             return "glTexStorage3DMultisample";
         case EntryPoint::GLTexStorage3DMultisampleOES:
             return "glTexStorage3DMultisampleOES";
+        case EntryPoint::GLTexStorageAttribs2DEXT:
+            return "glTexStorageAttribs2DEXT";
+        case EntryPoint::GLTexStorageAttribs3DEXT:
+            return "glTexStorageAttribs3DEXT";
         case EntryPoint::GLTexStorageMem2DEXT:
             return "glTexStorageMem2DEXT";
         case EntryPoint::GLTexStorageMem2DMultisampleEXT:
