@@ -90,8 +90,6 @@ jobs:
           proprietary_codecs = true
           symbol_level = 1
           angle_enable_vulkan_validation_layers = false
-          angle_libs_suffix = "_angle"
-          build_apk_secondary_abi = true
           angle_enable_null = false
           angle_force_thread_safety = true
           angle_enable_vulkan = true
