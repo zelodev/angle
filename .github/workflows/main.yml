@@ -88,7 +88,9 @@ jobs:
           build_angle_deqp_tests = false
           dcheck_always_on = true
           proprietary_codecs = true
-          symbol_level = 1
+          symbol_level = 0
+          blink_symbol_level = 0
+          v8_symbol_level = 0
           angle_enable_vulkan_validation_layers = false
           angle_enable_null = false
           angle_force_thread_safety = true
