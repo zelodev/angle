@@ -1372,6 +1372,10 @@ EXPORTS
     EGL_CreateDeviceANGLE
     EGL_ReleaseDeviceANGLE
 
+    ; EGL_ANGLE_device_vulkan
+    EGL_LockVulkanQueueANGLE
+    EGL_UnlockVulkanQueueANGLE
+
     ; EGL_ANGLE_external_context_and_surface
     EGL_AcquireExternalContextANGLE
     EGL_ReleaseExternalContextANGLE
@@ -1407,9 +1411,6 @@ EXPORTS
     ; EGL_ANGLE_stream_producer_d3d_texture
     EGL_CreateStreamProducerD3DTextureANGLE
     EGL_StreamPostD3DTextureANGLE
-
-    ; EGL_ANGLE_swap_with_frame_token
-    EGL_SwapBuffersWithFrameTokenANGLE
 
     ; EGL_ANGLE_sync_control_rate
     EGL_GetMscRateANGLE

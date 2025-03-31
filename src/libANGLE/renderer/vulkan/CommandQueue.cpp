@@ -8,9 +8,11 @@
 //
 
 #include "libANGLE/renderer/vulkan/CommandQueue.h"
+#include <algorithm>
 #include "common/system_utils.h"
 #include "libANGLE/renderer/vulkan/SyncVk.h"
 #include "libANGLE/renderer/vulkan/vk_renderer.h"
+#include "vulkan/vulkan_core.h"
 
 namespace rx
 {
@@ -121,7 +123,7 @@ void RecyclableFence::destroy(VkDevice device)
 }
 
 // FenceRecycler implementation
-void FenceRecycler::destroy(Context *context)
+void FenceRecycler::destroy(ErrorContext *context)
 {
     std::lock_guard<angle::SimpleMutex> lock(mMutex);
     mRecycler.destroy(context->getDevice());
@@ -185,13 +187,13 @@ void CommandBatch::destroy(VkDevice device)
     // Do not clean other members to catch invalid reuse attempt with ASSERTs.
 }
 
-angle::Result CommandBatch::release(Context *context)
+angle::Result CommandBatch::release(ErrorContext *context, WhenToResetCommandBuffer whenToReset)
 {
     if (mPrimaryCommands.valid())
     {
         ASSERT(mCommandPoolAccess != nullptr);
         ANGLE_TRY(mCommandPoolAccess->collectPrimaryCommandBuffer(context, mProtectionType,
-                                                                  &mPrimaryCommands));
+                                                                  &mPrimaryCommands, whenToReset));
     }
     mSecondaryCommands.releaseCommandBuffers();
     mFence.reset();
@@ -341,7 +343,7 @@ void CleanUpThread::handleError(VkResult errorCode,
 }
 
 CleanUpThread::CleanUpThread(Renderer *renderer, CommandQueue *commandQueue)
-    : Context(renderer),
+    : ErrorContext(renderer),
       mCommandQueue(commandQueue),
       mTaskThreadShouldExit(false),
       mNeedCleanUp(false)
@@ -349,7 +351,7 @@ CleanUpThread::CleanUpThread(Renderer *renderer, CommandQueue *commandQueue)
 
 CleanUpThread::~CleanUpThread() = default;
 
-angle::Result CleanUpThread::checkAndPopPendingError(Context *errorHandlingContext)
+angle::Result CleanUpThread::checkAndPopPendingError(ErrorContext *errorHandlingContext)
 {
     std::lock_guard<angle::SimpleMutex> queueLock(mErrorMutex);
     if (mErrors.empty())
@@ -394,6 +396,9 @@ void CleanUpThread::processTasks()
 
 angle::Result CleanUpThread::processTasksImpl(bool *exitThread)
 {
+    WhenToResetCommandBuffer whenToReset = mRenderer->getFeatures().asyncCommandBufferReset.enabled
+                                               ? WhenToResetCommandBuffer::Now
+                                               : WhenToResetCommandBuffer::Defer;
     while (true)
     {
         std::unique_lock<std::mutex> lock(mMutex);
@@ -412,10 +417,10 @@ angle::Result CleanUpThread::processTasksImpl(bool *exitThread)
             ANGLE_TRY(mCommandQueue->checkCompletedCommands(this));
 
             // Reset command buffer and clean up garbage
-            if (mRenderer->isAsyncCommandBufferResetAndGarbageCleanupEnabled() &&
+            if (mRenderer->getFeatures().asyncGarbageCleanup.enabled &&
                 mCommandQueue->hasFinishedCommands())
             {
-                ANGLE_TRY(mCommandQueue->releaseFinishedCommands(this));
+                ANGLE_TRY(mCommandQueue->releaseFinishedCommands(this, whenToReset));
             }
             mRenderer->cleanupGarbage(nullptr);
         }
@@ -431,7 +436,7 @@ angle::Result CleanUpThread::init()
     return angle::Result::Continue;
 }
 
-void CleanUpThread::destroy(Context *context)
+void CleanUpThread::destroy(ErrorContext *context)
 {
     {
         // Request to terminate the worker thread
@@ -442,9 +447,9 @@ void CleanUpThread::destroy(Context *context)
     }
 
     // Perform any lingering clean up right away.
-    if (mRenderer->isAsyncCommandBufferResetAndGarbageCleanupEnabled())
+    if (mRenderer->getFeatures().asyncGarbageCleanup.enabled)
     {
-        (void)mCommandQueue->releaseFinishedCommands(context);
+        (void)mCommandQueue->releaseFinishedCommands(context, WhenToResetCommandBuffer::Now);
         mRenderer->cleanupGarbage(nullptr);
     }
 
@@ -459,7 +464,7 @@ CommandPoolAccess::~CommandPoolAccess() = default;
 
 // CommandPoolAccess public API implementation. These must be thread safe and never called from
 // CommandPoolAccess class itself.
-angle::Result CommandPoolAccess::initCommandPool(Context *context,
+angle::Result CommandPoolAccess::initCommandPool(ErrorContext *context,
                                                  ProtectionType protectionType,
                                                  const uint32_t queueFamilyIndex)
 {
@@ -492,20 +497,21 @@ void CommandPoolAccess::destroyPrimaryCommandBuffer(VkDevice device,
                                                     PrimaryCommandBuffer *primaryCommands) const
 {
     ASSERT(primaryCommands->valid());
-    std::lock_guard<angle::SimpleMutex> lock(mCmdPoolMutex);
 
+    // Does not require a pool mutex lock.
     primaryCommands->destroy(device);
 }
 
-angle::Result CommandPoolAccess::collectPrimaryCommandBuffer(Context *context,
+angle::Result CommandPoolAccess::collectPrimaryCommandBuffer(ErrorContext *context,
                                                              const ProtectionType protectionType,
-                                                             PrimaryCommandBuffer *primaryCommands)
+                                                             PrimaryCommandBuffer *primaryCommands,
+                                                             WhenToResetCommandBuffer whenToReset)
 {
     ASSERT(primaryCommands->valid());
     std::lock_guard<angle::SimpleMutex> lock(mCmdPoolMutex);
 
     PersistentCommandPool &commandPool = mPrimaryCommandPoolMap[protectionType];
-    ANGLE_TRY(commandPool.collect(context, std::move(*primaryCommands)));
+    ANGLE_TRY(commandPool.collect(context, std::move(*primaryCommands), whenToReset));
 
     return angle::Result::Continue;
 }
@@ -559,10 +565,11 @@ void CommandPoolAccess::flushWaitSemaphores(
 }
 
 angle::Result CommandPoolAccess::getCommandsAndWaitSemaphores(
-    Context *context,
+    ErrorContext *context,
     ProtectionType protectionType,
     egl::ContextPriority priority,
     CommandBatch *batchOut,
+    std::vector<VkImageMemoryBarrier> &&imagesToTransitionToForeign,
     std::vector<VkSemaphore> *waitSemaphoresOut,
     std::vector<VkPipelineStageFlags> *waitSemaphoreStageMasksOut)
 {
@@ -570,6 +577,21 @@ angle::Result CommandPoolAccess::getCommandsAndWaitSemaphores(
 
     CommandsState &state = mCommandsStateMap[priority][protectionType];
     ASSERT(state.primaryCommands.valid() || state.secondaryCommands.empty());
+
+    // If there are foreign images to transition, issue the barrier now.
+    if (!imagesToTransitionToForeign.empty())
+    {
+        // It is possible for another thread to have made a submission just now, such that there is
+        // no primary command buffer anymore.  In that case, one has to be allocated to hold the
+        // barriers.
+        ANGLE_TRY(ensurePrimaryCommandBufferValidLocked(context, protectionType, priority));
+
+        state.primaryCommands.pipelineBarrier(
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, 0, nullptr, 0,
+            nullptr, static_cast<uint32_t>(imagesToTransitionToForeign.size()),
+            imagesToTransitionToForeign.data());
+        imagesToTransitionToForeign.clear();
+    }
 
     // Store the primary CommandBuffer and the reference to CommandPoolAccess in the in-flight list.
     if (state.primaryCommands.valid())
@@ -599,7 +621,7 @@ CommandQueue::CommandQueue()
 
 CommandQueue::~CommandQueue() = default;
 
-void CommandQueue::destroy(Context *context)
+void CommandQueue::destroy(ErrorContext *context)
 {
     std::lock_guard<angle::SimpleMutex> queueSubmitLock(mQueueSubmitMutex);
     std::lock_guard<angle::SimpleMutex> cmdCompleteLock(mCmdCompleteMutex);
@@ -619,7 +641,7 @@ void CommandQueue::destroy(Context *context)
     ASSERT(mNumAllCommands == 0);
 }
 
-angle::Result CommandQueue::init(Context *context,
+angle::Result CommandQueue::init(ErrorContext *context,
                                  const QueueFamily &queueFamily,
                                  bool enableProtectedContent,
                                  uint32_t queueCount)
@@ -654,6 +676,9 @@ void CommandQueue::handleDeviceLost(Renderer *renderer)
     std::lock_guard<angle::SimpleMutex> cmdCompleteLock(mCmdCompleteMutex);
     std::lock_guard<angle::SimpleMutex> cmdReleaseLock(mCmdReleaseMutex);
 
+    // Work around a driver bug where resource clean up would cause a crash without vkQueueWaitIdle.
+    mQueueMap.waitAllQueuesIdle();
+
     while (!mInFlightCommands.empty())
     {
         CommandBatch &batch = mInFlightCommands.front();
@@ -670,7 +695,7 @@ void CommandQueue::handleDeviceLost(Renderer *renderer)
     }
 }
 
-angle::Result CommandQueue::postSubmitCheck(Context *context)
+angle::Result CommandQueue::postSubmitCheck(ErrorContext *context)
 {
     Renderer *renderer = context->getRenderer();
 
@@ -702,7 +727,7 @@ angle::Result CommandQueue::postSubmitCheck(Context *context)
     return angle::Result::Continue;
 }
 
-angle::Result CommandQueue::finishResourceUse(Context *context,
+angle::Result CommandQueue::finishResourceUse(ErrorContext *context,
                                               const ResourceUse &use,
                                               uint64_t timeout)
 {
@@ -732,7 +757,7 @@ angle::Result CommandQueue::finishResourceUse(Context *context,
     return angle::Result::Continue;
 }
 
-angle::Result CommandQueue::finishQueueSerial(Context *context,
+angle::Result CommandQueue::finishQueueSerial(ErrorContext *context,
                                               const QueueSerial &queueSerial,
                                               uint64_t timeout)
 {
@@ -740,7 +765,7 @@ angle::Result CommandQueue::finishQueueSerial(Context *context,
     return finishResourceUse(context, use, timeout);
 }
 
-angle::Result CommandQueue::waitIdle(Context *context, uint64_t timeout)
+angle::Result CommandQueue::waitIdle(ErrorContext *context, uint64_t timeout)
 {
     // Fill the local variable with lock
     ResourceUse use;
@@ -756,7 +781,7 @@ angle::Result CommandQueue::waitIdle(Context *context, uint64_t timeout)
     return finishResourceUse(context, use, timeout);
 }
 
-angle::Result CommandQueue::waitForResourceUseToFinishWithUserTimeout(Context *context,
+angle::Result CommandQueue::waitForResourceUseToFinishWithUserTimeout(ErrorContext *context,
                                                                       const ResourceUse &use,
                                                                       uint64_t timeout,
                                                                       VkResult *result)
@@ -823,12 +848,14 @@ bool CommandQueue::isBusy(Renderer *renderer) const
     return false;
 }
 
-angle::Result CommandQueue::submitCommands(Context *context,
-                                           ProtectionType protectionType,
-                                           egl::ContextPriority priority,
-                                           VkSemaphore signalSemaphore,
-                                           SharedExternalFence &&externalFence,
-                                           const QueueSerial &submitQueueSerial)
+angle::Result CommandQueue::submitCommands(
+    ErrorContext *context,
+    ProtectionType protectionType,
+    egl::ContextPriority priority,
+    VkSemaphore signalSemaphore,
+    SharedExternalFence &&externalFence,
+    std::vector<VkImageMemoryBarrier> &&imagesToTransitionToForeign,
+    const QueueSerial &submitQueueSerial)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "CommandQueue::submitCommands");
     std::lock_guard<angle::SimpleMutex> lock(mQueueSubmitMutex);
@@ -848,7 +875,8 @@ angle::Result CommandQueue::submitCommands(Context *context,
     std::vector<VkPipelineStageFlags> waitSemaphoreStageMasks;
 
     ANGLE_TRY(mCommandPoolAccess.getCommandsAndWaitSemaphores(
-        context, protectionType, priority, &batch, &waitSemaphores, &waitSemaphoreStageMasks));
+        context, protectionType, priority, &batch, std::move(imagesToTransitionToForeign),
+        &waitSemaphores, &waitSemaphoreStageMasks));
 
     mPerfCounters.commandQueueWaitSemaphoresTotal += waitSemaphores.size();
 
@@ -889,7 +917,7 @@ angle::Result CommandQueue::submitCommands(Context *context,
     return queueSubmitLocked(context, priority, submitInfo, scopedBatch, submitQueueSerial);
 }
 
-angle::Result CommandQueue::queueSubmitOneOff(Context *context,
+angle::Result CommandQueue::queueSubmitOneOff(ErrorContext *context,
                                               ProtectionType protectionType,
                                               egl::ContextPriority contextPriority,
                                               VkCommandBuffer commandBufferHandle,
@@ -938,7 +966,7 @@ angle::Result CommandQueue::queueSubmitOneOff(Context *context,
     return queueSubmitLocked(context, contextPriority, submitInfo, scopedBatch, submitQueueSerial);
 }
 
-angle::Result CommandQueue::queueSubmitLocked(Context *context,
+angle::Result CommandQueue::queueSubmitLocked(ErrorContext *context,
                                               egl::ContextPriority contextPriority,
                                               const VkSubmitInfo &submitInfo,
                                               DeviceScoped<CommandBatch> &commandBatch,
@@ -951,11 +979,11 @@ angle::Result CommandQueue::queueSubmitLocked(Context *context,
     // off-screen scenarios.
     if (mInFlightCommands.full())
     {
-        std::lock_guard<angle::SimpleMutex> lock(mCmdCompleteMutex);
+        std::unique_lock<angle::SimpleMutex> lock(mCmdCompleteMutex);
         // Check once more inside the lock in case other thread already finished some/all commands.
         if (mInFlightCommands.full())
         {
-            ANGLE_TRY(finishOneCommandBatchLocked(context, renderer->getMaxFenceWaitTimeNs()));
+            ANGLE_TRY(finishOneCommandBatch(context, renderer->getMaxFenceWaitTimeNs(), &lock));
         }
     }
     // Assert will succeed since new batch is pushed only in this method below.
@@ -967,7 +995,7 @@ angle::Result CommandQueue::queueSubmitLocked(Context *context,
     if (mNumAllCommands == mFinishedCommandBatches.capacity())
     {
         std::lock_guard<angle::SimpleMutex> lock(mCmdReleaseMutex);
-        ANGLE_TRY(releaseFinishedCommandsLocked(context));
+        ANGLE_TRY(releaseFinishedCommandsLocked(context, WhenToResetCommandBuffer::Now));
     }
     // Assert will succeed since mNumAllCommands is incremented only in this method below.
     ASSERT(mNumAllCommands < mFinishedCommandBatches.capacity());
@@ -1025,24 +1053,24 @@ void CommandQueue::resetPerFramePerfCounters()
     mPerfCounters.vkQueueSubmitCallsPerFrame      = 0;
 }
 
-angle::Result CommandQueue::releaseFinishedCommandsAndCleanupGarbage(Context *context)
+angle::Result CommandQueue::releaseFinishedCommandsAndCleanupGarbage(ErrorContext *context)
 {
     Renderer *renderer = context->getRenderer();
-    if (renderer->isAsyncCommandBufferResetAndGarbageCleanupEnabled())
+    if (renderer->getFeatures().asyncGarbageCleanup.enabled)
     {
         renderer->requestAsyncCommandsAndGarbageCleanup(context);
     }
     else
     {
         // Do immediate command buffer reset and garbage cleanup
-        ANGLE_TRY(releaseFinishedCommands(context));
+        ANGLE_TRY(releaseFinishedCommands(context, WhenToResetCommandBuffer::Now));
         renderer->cleanupGarbage(nullptr);
     }
 
     return angle::Result::Continue;
 }
 
-angle::Result CommandQueue::cleanupSomeGarbage(Context *context,
+angle::Result CommandQueue::cleanupSomeGarbage(ErrorContext *context,
                                                size_t minInFlightBatchesToKeep,
                                                bool *anyGarbageCleanedOut)
 {
@@ -1055,12 +1083,12 @@ angle::Result CommandQueue::cleanupSomeGarbage(Context *context,
     while (!anyGarbageCleaned)
     {
         {
-            std::lock_guard<angle::SimpleMutex> lock(mCmdCompleteMutex);
+            std::unique_lock<angle::SimpleMutex> lock(mCmdCompleteMutex);
             if (mInFlightCommands.size() <= minInFlightBatchesToKeep)
             {
                 break;
             }
-            ANGLE_TRY(finishOneCommandBatchLocked(context, renderer->getMaxFenceWaitTimeNs()));
+            ANGLE_TRY(finishOneCommandBatch(context, renderer->getMaxFenceWaitTimeNs(), &lock));
         }
         renderer->cleanupGarbage(&anyGarbageCleaned);
     }
@@ -1074,7 +1102,7 @@ angle::Result CommandQueue::cleanupSomeGarbage(Context *context,
 }
 
 // CommandQueue private API implementation. These are called by public API, so lock already held.
-angle::Result CommandQueue::checkOneCommandBatchLocked(Context *context, bool *finished)
+angle::Result CommandQueue::checkOneCommandBatchLocked(ErrorContext *context, bool *finished)
 {
     ASSERT(!mInFlightCommands.empty());
 
@@ -1096,18 +1124,27 @@ angle::Result CommandQueue::checkOneCommandBatchLocked(Context *context, bool *f
     return angle::Result::Continue;
 }
 
-angle::Result CommandQueue::finishOneCommandBatchLocked(Context *context, uint64_t timeout)
+angle::Result CommandQueue::finishOneCommandBatch(ErrorContext *context,
+                                                  uint64_t timeout,
+                                                  std::unique_lock<angle::SimpleMutex> *lock)
 {
     ASSERT(!mInFlightCommands.empty());
+    ASSERT(lock->owns_lock());
 
     CommandBatch &batch = mInFlightCommands.front();
+    // Save queue serial since the batch may be destroyed during possible unlocked fence wait.
+    const QueueSerial batchSerial = batch.getQueueSerial();
     if (batch.hasFence())
     {
-        VkResult status = batch.waitFence(context->getDevice(), timeout);
+        VkResult status = batch.waitFenceUnlocked(context->getDevice(), timeout, lock);
         ANGLE_VK_TRY(context, status);
     }
 
-    onCommandBatchFinishedLocked(std::move(batch));
+    // Other thread might already finish the batch, in that case do not touch the |batch| reference.
+    if (!hasQueueSerialFinished(batchSerial))
+    {
+        onCommandBatchFinishedLocked(std::move(batch));
+    }
 
     return angle::Result::Continue;
 }
@@ -1121,7 +1158,8 @@ void CommandQueue::onCommandBatchFinishedLocked(CommandBatch &&batch)
     moveInFlightBatchToFinishedQueueLocked(std::move(batch));
 }
 
-angle::Result CommandQueue::releaseFinishedCommandsLocked(Context *context)
+angle::Result CommandQueue::releaseFinishedCommandsLocked(ErrorContext *context,
+                                                          WhenToResetCommandBuffer whenToReset)
 {
     ANGLE_TRACE_EVENT0("gpu.angle", "releaseFinishedCommandsLocked");
 
@@ -1129,14 +1167,14 @@ angle::Result CommandQueue::releaseFinishedCommandsLocked(Context *context)
     {
         CommandBatch &batch = mFinishedCommandBatches.front();
         ASSERT(batch.getQueueSerial() <= mLastCompletedSerials);
-        ANGLE_TRY(batch.release(context));
+        ANGLE_TRY(batch.release(context, whenToReset));
         popFinishedBatchLocked();
     }
 
     return angle::Result::Continue;
 }
 
-angle::Result CommandQueue::checkCompletedCommandsLocked(Context *context)
+angle::Result CommandQueue::checkCompletedCommandsLocked(ErrorContext *context)
 {
     while (!mInFlightCommands.empty())
     {
@@ -1195,6 +1233,11 @@ const float QueueFamily::kQueuePriorities[static_cast<uint32_t>(egl::ContextPrio
 DeviceQueueMap::~DeviceQueueMap() {}
 
 void DeviceQueueMap::destroy()
+{
+    waitAllQueuesIdle();
+}
+
+void DeviceQueueMap::waitAllQueuesIdle()
 {
     // Force all commands to finish by flushing all queues.
     for (const QueueAndIndex &queueAndIndex : mQueueAndIndices)
@@ -1264,32 +1307,36 @@ void QueueFamily::initialize(const VkQueueFamilyProperties &queueFamilyPropertie
 }
 
 uint32_t QueueFamily::FindIndex(const std::vector<VkQueueFamilyProperties> &queueFamilyProperties,
-                                VkQueueFlags flags,
-                                int32_t matchNumber,
+                                VkQueueFlags includeFlags,
+                                VkQueueFlags optionalFlags,
+                                VkQueueFlags excludeFlags,
                                 uint32_t *matchCount)
 {
-    uint32_t index = QueueFamily::kInvalidIndex;
-    uint32_t count = 0;
+    // check with both include and optional flags
+    VkQueueFlags preferredFlags = includeFlags | optionalFlags;
+    auto findIndexPredicate     = [&preferredFlags,
+                               &excludeFlags](const VkQueueFamilyProperties &queueInfo) {
+        return (queueInfo.queueFlags & excludeFlags) == 0 &&
+               (queueInfo.queueFlags & preferredFlags) == preferredFlags;
+    };
 
-    for (uint32_t familyIndex = 0; familyIndex < queueFamilyProperties.size(); ++familyIndex)
+    auto it = std::find_if(queueFamilyProperties.begin(), queueFamilyProperties.end(),
+                           findIndexPredicate);
+    if (it == queueFamilyProperties.end())
     {
-        const auto &queueInfo = queueFamilyProperties[familyIndex];
-        if ((queueInfo.queueFlags & flags) == flags)
-        {
-            ASSERT(queueInfo.queueCount > 0);
-            count++;
-            if ((index == QueueFamily::kInvalidIndex) && (matchNumber-- == 0))
-            {
-                index = familyIndex;
-            }
-        }
+        // didn't find a match, exclude the optional flags from the list
+        preferredFlags = includeFlags;
+        it             = std::find_if(queueFamilyProperties.begin(), queueFamilyProperties.end(),
+                                      findIndexPredicate);
     }
-    if (matchCount)
+    if (it == queueFamilyProperties.end())
     {
-        *matchCount = count;
+        *matchCount = 0;
+        return QueueFamily::kInvalidIndex;
     }
 
-    return index;
+    *matchCount = 1;
+    return static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), it));
 }
 
 }  // namespace vk

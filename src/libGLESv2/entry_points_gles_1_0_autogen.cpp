@@ -15,6 +15,7 @@
 #include "libANGLE/Context.h"
 #include "libANGLE/Context.inl.h"
 #include "libANGLE/capture/capture_gles_1_0_autogen.h"
+#include "libANGLE/context_private_call.inl.h"
 #include "libANGLE/context_private_call_autogen.h"
 #include "libANGLE/entry_points_utils.h"
 #include "libANGLE/validationES1.h"
@@ -37,7 +38,7 @@ void GL_APIENTRY GL_AlphaFunc(GLenum func, GLfloat ref)
                             ValidateAlphaFunc(context->getPrivateState(),
                                                       context->getMutableErrorSetForValidation(),
                                                       angle::EntryPoint::GLAlphaFunc, funcPacked, ref));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateAlphaFunc(context->getMutablePrivateState(),
                                     context->getMutablePrivateStateCache(), funcPacked, ref);
@@ -65,7 +66,7 @@ void GL_APIENTRY GL_AlphaFuncx(GLenum func, GLfixed ref)
                             ValidateAlphaFuncx(context->getPrivateState(),
                                                        context->getMutableErrorSetForValidation(),
                                                        angle::EntryPoint::GLAlphaFuncx, funcPacked, ref));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateAlphaFuncx(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), funcPacked, ref);
@@ -94,7 +95,7 @@ void GL_APIENTRY GL_ClearColorx(GLfixed red, GLfixed green, GLfixed blue, GLfixe
              ValidateClearColorx(context->getPrivateState(),
                                  context->getMutableErrorSetForValidation(),
                                  angle::EntryPoint::GLClearColorx, red, green, blue, alpha));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateClearColorx(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), red, green, blue,
@@ -121,7 +122,7 @@ void GL_APIENTRY GL_ClearDepthx(GLfixed depth)
                             ValidateClearDepthx(context->getPrivateState(),
                                                 context->getMutableErrorSetForValidation(),
                                                 angle::EntryPoint::GLClearDepthx, depth));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateClearDepthx(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), depth);
@@ -148,7 +149,7 @@ void GL_APIENTRY GL_ClientActiveTexture(GLenum texture)
         bool isCallValid = (context->skipValidation() ||
                             ValidateClientActiveTexture(
                                 context, angle::EntryPoint::GLClientActiveTexture, texture));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             context->clientActiveTexture(texture);
         }
@@ -174,7 +175,7 @@ void GL_APIENTRY GL_ClipPlanef(GLenum p, const GLfloat *eqn)
                             ValidateClipPlanef(context->getPrivateState(),
                                                context->getMutableErrorSetForValidation(),
                                                angle::EntryPoint::GLClipPlanef, p, eqn));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateClipPlanef(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), p, eqn);
@@ -201,7 +202,7 @@ void GL_APIENTRY GL_ClipPlanex(GLenum plane, const GLfixed *equation)
                             ValidateClipPlanex(context->getPrivateState(),
                                                context->getMutableErrorSetForValidation(),
                                                angle::EntryPoint::GLClipPlanex, plane, equation));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateClipPlanex(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), plane, equation);
@@ -228,7 +229,7 @@ void GL_APIENTRY GL_Color4f(GLfloat red, GLfloat green, GLfloat blue, GLfloat al
             (context->skipValidation() ||
              ValidateColor4f(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                              angle::EntryPoint::GLColor4f, red, green, blue, alpha));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateColor4f(context->getMutablePrivateState(),
                                   context->getMutablePrivateStateCache(), red, green, blue, alpha);
@@ -256,7 +257,7 @@ void GL_APIENTRY GL_Color4ub(GLubyte red, GLubyte green, GLubyte blue, GLubyte a
              ValidateColor4ub(context->getPrivateState(),
                               context->getMutableErrorSetForValidation(),
                               angle::EntryPoint::GLColor4ub, red, green, blue, alpha));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateColor4ub(context->getMutablePrivateState(),
                                    context->getMutablePrivateStateCache(), red, green, blue, alpha);
@@ -283,7 +284,7 @@ void GL_APIENTRY GL_Color4x(GLfixed red, GLfixed green, GLfixed blue, GLfixed al
             (context->skipValidation() ||
              ValidateColor4x(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                              angle::EntryPoint::GLColor4x, red, green, blue, alpha));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateColor4x(context->getMutablePrivateState(),
                                   context->getMutablePrivateStateCache(), red, green, blue, alpha);
@@ -313,7 +314,7 @@ void GL_APIENTRY GL_ColorPointer(GLint size, GLenum type, GLsizei stride, const 
         bool isCallValid = (context->skipValidation() ||
                             ValidateColorPointer(context, angle::EntryPoint::GLColorPointer, size,
                                                  typePacked, stride, pointer));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             context->colorPointer(size, typePacked, stride, pointer);
         }
@@ -338,7 +339,7 @@ void GL_APIENTRY GL_DepthRangex(GLfixed n, GLfixed f)
                             ValidateDepthRangex(context->getPrivateState(),
                                                 context->getMutableErrorSetForValidation(),
                                                 angle::EntryPoint::GLDepthRangex, n, f));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateDepthRangex(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), n, f);
@@ -366,7 +367,7 @@ void GL_APIENTRY GL_DisableClientState(GLenum array)
         bool isCallValid = (context->skipValidation() ||
                             ValidateDisableClientState(
                                 context, angle::EntryPoint::GLDisableClientState, arrayPacked));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             context->disableClientState(arrayPacked);
         }
@@ -393,7 +394,7 @@ void GL_APIENTRY GL_EnableClientState(GLenum array)
         bool isCallValid = (context->skipValidation() ||
                             ValidateEnableClientState(
                                 context, angle::EntryPoint::GLEnableClientState, arrayPacked));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             context->enableClientState(arrayPacked);
         }
@@ -419,7 +420,7 @@ void GL_APIENTRY GL_Fogf(GLenum pname, GLfloat param)
             (context->skipValidation() ||
              ValidateFogf(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                           angle::EntryPoint::GLFogf, pname, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateFogf(context->getMutablePrivateState(),
                                context->getMutablePrivateStateCache(), pname, param);
@@ -446,7 +447,7 @@ void GL_APIENTRY GL_Fogfv(GLenum pname, const GLfloat *params)
             (context->skipValidation() ||
              ValidateFogfv(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                            angle::EntryPoint::GLFogfv, pname, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateFogfv(context->getMutablePrivateState(),
                                 context->getMutablePrivateStateCache(), pname, params);
@@ -473,7 +474,7 @@ void GL_APIENTRY GL_Fogx(GLenum pname, GLfixed param)
             (context->skipValidation() ||
              ValidateFogx(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                           angle::EntryPoint::GLFogx, pname, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateFogx(context->getMutablePrivateState(),
                                context->getMutablePrivateStateCache(), pname, param);
@@ -500,7 +501,7 @@ void GL_APIENTRY GL_Fogxv(GLenum pname, const GLfixed *param)
             (context->skipValidation() ||
              ValidateFogxv(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                            angle::EntryPoint::GLFogxv, pname, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateFogxv(context->getMutablePrivateState(),
                                 context->getMutablePrivateStateCache(), pname, param);
@@ -527,7 +528,7 @@ void GL_APIENTRY GL_Frustumf(GLfloat l, GLfloat r, GLfloat b, GLfloat t, GLfloat
                             ValidateFrustumf(context->getPrivateState(),
                                              context->getMutableErrorSetForValidation(),
                                              angle::EntryPoint::GLFrustumf, l, r, b, t, n, f));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateFrustumf(context->getMutablePrivateState(),
                                    context->getMutablePrivateStateCache(), l, r, b, t, n, f);
@@ -555,7 +556,7 @@ void GL_APIENTRY GL_Frustumx(GLfixed l, GLfixed r, GLfixed b, GLfixed t, GLfixed
                             ValidateFrustumx(context->getPrivateState(),
                                              context->getMutableErrorSetForValidation(),
                                              angle::EntryPoint::GLFrustumx, l, r, b, t, n, f));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateFrustumx(context->getMutablePrivateState(),
                                    context->getMutablePrivateStateCache(), l, r, b, t, n, f);
@@ -583,7 +584,7 @@ void GL_APIENTRY GL_GetClipPlanef(GLenum plane, GLfloat *equation)
              ValidateGetClipPlanef(context->getPrivateState(),
                                    context->getMutableErrorSetForValidation(),
                                    angle::EntryPoint::GLGetClipPlanef, plane, equation));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateGetClipPlanef(context->getMutablePrivateState(),
                                         context->getMutablePrivateStateCache(), plane, equation);
@@ -611,7 +612,7 @@ void GL_APIENTRY GL_GetClipPlanex(GLenum plane, GLfixed *equation)
              ValidateGetClipPlanex(context->getPrivateState(),
                                    context->getMutableErrorSetForValidation(),
                                    angle::EntryPoint::GLGetClipPlanex, plane, equation));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateGetClipPlanex(context->getMutablePrivateState(),
                                         context->getMutablePrivateStateCache(), plane, equation);
@@ -638,7 +639,7 @@ void GL_APIENTRY GL_GetFixedv(GLenum pname, GLfixed *params)
         bool isCallValid =
             (context->skipValidation() ||
              ValidateGetFixedv(context, angle::EntryPoint::GLGetFixedv, pname, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             context->getFixedv(pname, params);
         }
@@ -667,7 +668,7 @@ void GL_APIENTRY GL_GetLightfv(GLenum light, GLenum pname, GLfloat *params)
              ValidateGetLightfv(context->getPrivateState(),
                                 context->getMutableErrorSetForValidation(),
                                 angle::EntryPoint::GLGetLightfv, light, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateGetLightfv(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), light, pnamePacked,
@@ -698,7 +699,7 @@ void GL_APIENTRY GL_GetLightxv(GLenum light, GLenum pname, GLfixed *params)
              ValidateGetLightxv(context->getPrivateState(),
                                 context->getMutableErrorSetForValidation(),
                                 angle::EntryPoint::GLGetLightxv, light, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateGetLightxv(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), light, pnamePacked,
@@ -730,7 +731,7 @@ void GL_APIENTRY GL_GetMaterialfv(GLenum face, GLenum pname, GLfloat *params)
              ValidateGetMaterialfv(context->getPrivateState(),
                                    context->getMutableErrorSetForValidation(),
                                    angle::EntryPoint::GLGetMaterialfv, face, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateGetMaterialfv(context->getMutablePrivateState(),
                                         context->getMutablePrivateStateCache(), face, pnamePacked,
@@ -762,7 +763,7 @@ void GL_APIENTRY GL_GetMaterialxv(GLenum face, GLenum pname, GLfixed *params)
              ValidateGetMaterialxv(context->getPrivateState(),
                                    context->getMutableErrorSetForValidation(),
                                    angle::EntryPoint::GLGetMaterialxv, face, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateGetMaterialxv(context->getMutablePrivateState(),
                                         context->getMutablePrivateStateCache(), face, pnamePacked,
@@ -795,7 +796,7 @@ void GL_APIENTRY GL_GetTexEnvfv(GLenum target, GLenum pname, GLfloat *params)
              ValidateGetTexEnvfv(
                  context->getPrivateState(), context->getMutableErrorSetForValidation(),
                  angle::EntryPoint::GLGetTexEnvfv, targetPacked, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateGetTexEnvfv(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), targetPacked,
@@ -828,7 +829,7 @@ void GL_APIENTRY GL_GetTexEnviv(GLenum target, GLenum pname, GLint *params)
              ValidateGetTexEnviv(
                  context->getPrivateState(), context->getMutableErrorSetForValidation(),
                  angle::EntryPoint::GLGetTexEnviv, targetPacked, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateGetTexEnviv(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), targetPacked,
@@ -861,7 +862,7 @@ void GL_APIENTRY GL_GetTexEnvxv(GLenum target, GLenum pname, GLfixed *params)
              ValidateGetTexEnvxv(
                  context->getPrivateState(), context->getMutableErrorSetForValidation(),
                  angle::EntryPoint::GLGetTexEnvxv, targetPacked, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateGetTexEnvxv(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), targetPacked,
@@ -893,7 +894,7 @@ void GL_APIENTRY GL_GetTexParameterxv(GLenum target, GLenum pname, GLfixed *para
             (context->skipValidation() ||
              ValidateGetTexParameterxv(context, angle::EntryPoint::GLGetTexParameterxv,
                                        targetPacked, pname, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             context->getTexParameterxv(targetPacked, pname, params);
         }
@@ -919,7 +920,7 @@ void GL_APIENTRY GL_LightModelf(GLenum pname, GLfloat param)
                             ValidateLightModelf(context->getPrivateState(),
                                                 context->getMutableErrorSetForValidation(),
                                                 angle::EntryPoint::GLLightModelf, pname, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLightModelf(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), pname, param);
@@ -946,7 +947,7 @@ void GL_APIENTRY GL_LightModelfv(GLenum pname, const GLfloat *params)
                             ValidateLightModelfv(context->getPrivateState(),
                                                  context->getMutableErrorSetForValidation(),
                                                  angle::EntryPoint::GLLightModelfv, pname, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLightModelfv(context->getMutablePrivateState(),
                                        context->getMutablePrivateStateCache(), pname, params);
@@ -973,7 +974,7 @@ void GL_APIENTRY GL_LightModelx(GLenum pname, GLfixed param)
                             ValidateLightModelx(context->getPrivateState(),
                                                 context->getMutableErrorSetForValidation(),
                                                 angle::EntryPoint::GLLightModelx, pname, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLightModelx(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), pname, param);
@@ -1000,7 +1001,7 @@ void GL_APIENTRY GL_LightModelxv(GLenum pname, const GLfixed *param)
                             ValidateLightModelxv(context->getPrivateState(),
                                                  context->getMutableErrorSetForValidation(),
                                                  angle::EntryPoint::GLLightModelxv, pname, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLightModelxv(context->getMutablePrivateState(),
                                        context->getMutablePrivateStateCache(), pname, param);
@@ -1029,7 +1030,7 @@ void GL_APIENTRY GL_Lightf(GLenum light, GLenum pname, GLfloat param)
             (context->skipValidation() ||
              ValidateLightf(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                             angle::EntryPoint::GLLightf, light, pnamePacked, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLightf(context->getMutablePrivateState(),
                                  context->getMutablePrivateStateCache(), light, pnamePacked, param);
@@ -1058,7 +1059,7 @@ void GL_APIENTRY GL_Lightfv(GLenum light, GLenum pname, const GLfloat *params)
             (context->skipValidation() ||
              ValidateLightfv(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                              angle::EntryPoint::GLLightfv, light, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLightfv(context->getMutablePrivateState(),
                                   context->getMutablePrivateStateCache(), light, pnamePacked,
@@ -1088,7 +1089,7 @@ void GL_APIENTRY GL_Lightx(GLenum light, GLenum pname, GLfixed param)
             (context->skipValidation() ||
              ValidateLightx(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                             angle::EntryPoint::GLLightx, light, pnamePacked, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLightx(context->getMutablePrivateState(),
                                  context->getMutablePrivateStateCache(), light, pnamePacked, param);
@@ -1117,7 +1118,7 @@ void GL_APIENTRY GL_Lightxv(GLenum light, GLenum pname, const GLfixed *params)
             (context->skipValidation() ||
              ValidateLightxv(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                              angle::EntryPoint::GLLightxv, light, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLightxv(context->getMutablePrivateState(),
                                   context->getMutablePrivateStateCache(), light, pnamePacked,
@@ -1144,7 +1145,7 @@ void GL_APIENTRY GL_LineWidthx(GLfixed width)
                             ValidateLineWidthx(context->getPrivateState(),
                                                context->getMutableErrorSetForValidation(),
                                                angle::EntryPoint::GLLineWidthx, width));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLineWidthx(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), width);
@@ -1170,7 +1171,7 @@ void GL_APIENTRY GL_LoadIdentity()
                             ValidateLoadIdentity(context->getPrivateState(),
                                                  context->getMutableErrorSetForValidation(),
                                                  angle::EntryPoint::GLLoadIdentity));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLoadIdentity(context->getMutablePrivateState(),
                                        context->getMutablePrivateStateCache());
@@ -1197,7 +1198,7 @@ void GL_APIENTRY GL_LoadMatrixf(const GLfloat *m)
                             ValidateLoadMatrixf(context->getPrivateState(),
                                                 context->getMutableErrorSetForValidation(),
                                                 angle::EntryPoint::GLLoadMatrixf, m));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLoadMatrixf(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), m);
@@ -1224,7 +1225,7 @@ void GL_APIENTRY GL_LoadMatrixx(const GLfixed *m)
                             ValidateLoadMatrixx(context->getPrivateState(),
                                                 context->getMutableErrorSetForValidation(),
                                                 angle::EntryPoint::GLLoadMatrixx, m));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLoadMatrixx(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), m);
@@ -1252,7 +1253,7 @@ void GL_APIENTRY GL_LogicOp(GLenum opcode)
             (context->skipValidation() ||
              ValidateLogicOp(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                              angle::EntryPoint::GLLogicOp, opcodePacked));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateLogicOp(context->getMutablePrivateState(),
                                   context->getMutablePrivateStateCache(), opcodePacked);
@@ -1282,7 +1283,7 @@ void GL_APIENTRY GL_Materialf(GLenum face, GLenum pname, GLfloat param)
              ValidateMaterialf(context->getPrivateState(),
                                context->getMutableErrorSetForValidation(),
                                angle::EntryPoint::GLMaterialf, face, pnamePacked, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateMaterialf(context->getMutablePrivateState(),
                                     context->getMutablePrivateStateCache(), face, pnamePacked,
@@ -1313,7 +1314,7 @@ void GL_APIENTRY GL_Materialfv(GLenum face, GLenum pname, const GLfloat *params)
              ValidateMaterialfv(context->getPrivateState(),
                                 context->getMutableErrorSetForValidation(),
                                 angle::EntryPoint::GLMaterialfv, face, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateMaterialfv(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), face, pnamePacked,
@@ -1344,7 +1345,7 @@ void GL_APIENTRY GL_Materialx(GLenum face, GLenum pname, GLfixed param)
              ValidateMaterialx(context->getPrivateState(),
                                context->getMutableErrorSetForValidation(),
                                angle::EntryPoint::GLMaterialx, face, pnamePacked, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateMaterialx(context->getMutablePrivateState(),
                                     context->getMutablePrivateStateCache(), face, pnamePacked,
@@ -1375,7 +1376,7 @@ void GL_APIENTRY GL_Materialxv(GLenum face, GLenum pname, const GLfixed *param)
              ValidateMaterialxv(context->getPrivateState(),
                                 context->getMutableErrorSetForValidation(),
                                 angle::EntryPoint::GLMaterialxv, face, pnamePacked, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateMaterialxv(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), face, pnamePacked,
@@ -1404,7 +1405,7 @@ void GL_APIENTRY GL_MatrixMode(GLenum mode)
                             ValidateMatrixMode(context->getPrivateState(),
                                                     context->getMutableErrorSetForValidation(),
                                                     angle::EntryPoint::GLMatrixMode, modePacked));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateMatrixMode(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), modePacked);
@@ -1431,7 +1432,7 @@ void GL_APIENTRY GL_MultMatrixf(const GLfloat *m)
                             ValidateMultMatrixf(context->getPrivateState(),
                                                 context->getMutableErrorSetForValidation(),
                                                 angle::EntryPoint::GLMultMatrixf, m));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateMultMatrixf(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), m);
@@ -1458,7 +1459,7 @@ void GL_APIENTRY GL_MultMatrixx(const GLfixed *m)
                             ValidateMultMatrixx(context->getPrivateState(),
                                                 context->getMutableErrorSetForValidation(),
                                                 angle::EntryPoint::GLMultMatrixx, m));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateMultMatrixx(context->getMutablePrivateState(),
                                       context->getMutablePrivateStateCache(), m);
@@ -1486,7 +1487,7 @@ void GL_APIENTRY GL_MultiTexCoord4f(GLenum target, GLfloat s, GLfloat t, GLfloat
              ValidateMultiTexCoord4f(context->getPrivateState(),
                                      context->getMutableErrorSetForValidation(),
                                      angle::EntryPoint::GLMultiTexCoord4f, target, s, t, r, q));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateMultiTexCoord4f(context->getMutablePrivateState(),
                                           context->getMutablePrivateStateCache(), target, s, t, r,
@@ -1516,7 +1517,7 @@ void GL_APIENTRY GL_MultiTexCoord4x(GLenum texture, GLfixed s, GLfixed t, GLfixe
              ValidateMultiTexCoord4x(context->getPrivateState(),
                                      context->getMutableErrorSetForValidation(),
                                      angle::EntryPoint::GLMultiTexCoord4x, texture, s, t, r, q));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateMultiTexCoord4x(context->getMutablePrivateState(),
                                           context->getMutablePrivateStateCache(), texture, s, t, r,
@@ -1543,7 +1544,7 @@ void GL_APIENTRY GL_Normal3f(GLfloat nx, GLfloat ny, GLfloat nz)
                             ValidateNormal3f(context->getPrivateState(),
                                              context->getMutableErrorSetForValidation(),
                                              angle::EntryPoint::GLNormal3f, nx, ny, nz));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateNormal3f(context->getMutablePrivateState(),
                                    context->getMutablePrivateStateCache(), nx, ny, nz);
@@ -1570,7 +1571,7 @@ void GL_APIENTRY GL_Normal3x(GLfixed nx, GLfixed ny, GLfixed nz)
                             ValidateNormal3x(context->getPrivateState(),
                                              context->getMutableErrorSetForValidation(),
                                              angle::EntryPoint::GLNormal3x, nx, ny, nz));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateNormal3x(context->getMutablePrivateState(),
                                    context->getMutablePrivateStateCache(), nx, ny, nz);
@@ -1599,7 +1600,7 @@ void GL_APIENTRY GL_NormalPointer(GLenum type, GLsizei stride, const void *point
         bool isCallValid = (context->skipValidation() ||
                             ValidateNormalPointer(context, angle::EntryPoint::GLNormalPointer,
                                                   typePacked, stride, pointer));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             context->normalPointer(typePacked, stride, pointer);
         }
@@ -1625,7 +1626,7 @@ void GL_APIENTRY GL_Orthof(GLfloat l, GLfloat r, GLfloat b, GLfloat t, GLfloat n
             (context->skipValidation() ||
              ValidateOrthof(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                             angle::EntryPoint::GLOrthof, l, r, b, t, n, f));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateOrthof(context->getMutablePrivateState(),
                                  context->getMutablePrivateStateCache(), l, r, b, t, n, f);
@@ -1653,7 +1654,7 @@ void GL_APIENTRY GL_Orthox(GLfixed l, GLfixed r, GLfixed b, GLfixed t, GLfixed n
             (context->skipValidation() ||
              ValidateOrthox(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                             angle::EntryPoint::GLOrthox, l, r, b, t, n, f));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateOrthox(context->getMutablePrivateState(),
                                  context->getMutablePrivateStateCache(), l, r, b, t, n, f);
@@ -1682,7 +1683,7 @@ void GL_APIENTRY GL_PointParameterf(GLenum pname, GLfloat param)
              ValidatePointParameterf(context->getPrivateState(),
                                      context->getMutableErrorSetForValidation(),
                                      angle::EntryPoint::GLPointParameterf, pnamePacked, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivatePointParameterf(context->getMutablePrivateState(),
                                           context->getMutablePrivateStateCache(), pnamePacked,
@@ -1712,7 +1713,7 @@ void GL_APIENTRY GL_PointParameterfv(GLenum pname, const GLfloat *params)
              ValidatePointParameterfv(context->getPrivateState(),
                                       context->getMutableErrorSetForValidation(),
                                       angle::EntryPoint::GLPointParameterfv, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivatePointParameterfv(context->getMutablePrivateState(),
                                            context->getMutablePrivateStateCache(), pnamePacked,
@@ -1742,7 +1743,7 @@ void GL_APIENTRY GL_PointParameterx(GLenum pname, GLfixed param)
              ValidatePointParameterx(context->getPrivateState(),
                                      context->getMutableErrorSetForValidation(),
                                      angle::EntryPoint::GLPointParameterx, pnamePacked, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivatePointParameterx(context->getMutablePrivateState(),
                                           context->getMutablePrivateStateCache(), pnamePacked,
@@ -1772,7 +1773,7 @@ void GL_APIENTRY GL_PointParameterxv(GLenum pname, const GLfixed *params)
              ValidatePointParameterxv(context->getPrivateState(),
                                       context->getMutableErrorSetForValidation(),
                                       angle::EntryPoint::GLPointParameterxv, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivatePointParameterxv(context->getMutablePrivateState(),
                                            context->getMutablePrivateStateCache(), pnamePacked,
@@ -1799,7 +1800,7 @@ void GL_APIENTRY GL_PointSize(GLfloat size)
                             ValidatePointSize(context->getPrivateState(),
                                               context->getMutableErrorSetForValidation(),
                                               angle::EntryPoint::GLPointSize, size));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivatePointSize(context->getMutablePrivateState(),
                                     context->getMutablePrivateStateCache(), size);
@@ -1825,7 +1826,7 @@ void GL_APIENTRY GL_PointSizex(GLfixed size)
                             ValidatePointSizex(context->getPrivateState(),
                                                context->getMutableErrorSetForValidation(),
                                                angle::EntryPoint::GLPointSizex, size));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivatePointSizex(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), size);
@@ -1853,7 +1854,7 @@ void GL_APIENTRY GL_PolygonOffsetx(GLfixed factor, GLfixed units)
              ValidatePolygonOffsetx(context->getPrivateState(),
                                     context->getMutableErrorSetForValidation(),
                                     angle::EntryPoint::GLPolygonOffsetx, factor, units));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivatePolygonOffsetx(context->getMutablePrivateState(),
                                          context->getMutablePrivateStateCache(), factor, units);
@@ -1879,7 +1880,7 @@ void GL_APIENTRY GL_PopMatrix()
                             ValidatePopMatrix(context->getPrivateState(),
                                               context->getMutableErrorSetForValidation(),
                                               angle::EntryPoint::GLPopMatrix));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivatePopMatrix(context->getMutablePrivateState(),
                                     context->getMutablePrivateStateCache());
@@ -1905,7 +1906,7 @@ void GL_APIENTRY GL_PushMatrix()
                             ValidatePushMatrix(context->getPrivateState(),
                                                context->getMutableErrorSetForValidation(),
                                                angle::EntryPoint::GLPushMatrix));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivatePushMatrix(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache());
@@ -1932,7 +1933,7 @@ void GL_APIENTRY GL_Rotatef(GLfloat angle, GLfloat x, GLfloat y, GLfloat z)
             (context->skipValidation() ||
              ValidateRotatef(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                              angle::EntryPoint::GLRotatef, angle, x, y, z));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateRotatef(context->getMutablePrivateState(),
                                   context->getMutablePrivateStateCache(), angle, x, y, z);
@@ -1959,7 +1960,7 @@ void GL_APIENTRY GL_Rotatex(GLfixed angle, GLfixed x, GLfixed y, GLfixed z)
             (context->skipValidation() ||
              ValidateRotatex(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                              angle::EntryPoint::GLRotatex, angle, x, y, z));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateRotatex(context->getMutablePrivateState(),
                                   context->getMutablePrivateStateCache(), angle, x, y, z);
@@ -1987,7 +1988,7 @@ void GL_APIENTRY GL_SampleCoveragex(GLclampx value, GLboolean invert)
              ValidateSampleCoveragex(context->getPrivateState(),
                                      context->getMutableErrorSetForValidation(),
                                      angle::EntryPoint::GLSampleCoveragex, value, invert));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateSampleCoveragex(context->getMutablePrivateState(),
                                           context->getMutablePrivateStateCache(), value, invert);
@@ -2013,7 +2014,7 @@ void GL_APIENTRY GL_Scalef(GLfloat x, GLfloat y, GLfloat z)
             (context->skipValidation() ||
              ValidateScalef(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                             angle::EntryPoint::GLScalef, x, y, z));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateScalef(context->getMutablePrivateState(),
                                  context->getMutablePrivateStateCache(), x, y, z);
@@ -2039,7 +2040,7 @@ void GL_APIENTRY GL_Scalex(GLfixed x, GLfixed y, GLfixed z)
             (context->skipValidation() ||
              ValidateScalex(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                             angle::EntryPoint::GLScalex, x, y, z));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateScalex(context->getMutablePrivateState(),
                                  context->getMutablePrivateStateCache(), x, y, z);
@@ -2067,7 +2068,7 @@ void GL_APIENTRY GL_ShadeModel(GLenum mode)
                             ValidateShadeModel(context->getPrivateState(),
                                                       context->getMutableErrorSetForValidation(),
                                                       angle::EntryPoint::GLShadeModel, modePacked));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateShadeModel(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), modePacked);
@@ -2097,7 +2098,7 @@ void GL_APIENTRY GL_TexCoordPointer(GLint size, GLenum type, GLsizei stride, con
         bool isCallValid = (context->skipValidation() ||
                             ValidateTexCoordPointer(context, angle::EntryPoint::GLTexCoordPointer,
                                                     size, typePacked, stride, pointer));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             context->texCoordPointer(size, typePacked, stride, pointer);
         }
@@ -2126,7 +2127,7 @@ void GL_APIENTRY GL_TexEnvf(GLenum target, GLenum pname, GLfloat param)
             (context->skipValidation() ||
              ValidateTexEnvf(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                              angle::EntryPoint::GLTexEnvf, targetPacked, pnamePacked, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateTexEnvf(context->getMutablePrivateState(),
                                   context->getMutablePrivateStateCache(), targetPacked, pnamePacked,
@@ -2158,7 +2159,7 @@ void GL_APIENTRY GL_TexEnvfv(GLenum target, GLenum pname, const GLfloat *params)
              ValidateTexEnvfv(context->getPrivateState(),
                               context->getMutableErrorSetForValidation(),
                               angle::EntryPoint::GLTexEnvfv, targetPacked, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateTexEnvfv(context->getMutablePrivateState(),
                                    context->getMutablePrivateStateCache(), targetPacked,
@@ -2189,7 +2190,7 @@ void GL_APIENTRY GL_TexEnvi(GLenum target, GLenum pname, GLint param)
             (context->skipValidation() ||
              ValidateTexEnvi(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                              angle::EntryPoint::GLTexEnvi, targetPacked, pnamePacked, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateTexEnvi(context->getMutablePrivateState(),
                                   context->getMutablePrivateStateCache(), targetPacked, pnamePacked,
@@ -2221,7 +2222,7 @@ void GL_APIENTRY GL_TexEnviv(GLenum target, GLenum pname, const GLint *params)
              ValidateTexEnviv(context->getPrivateState(),
                               context->getMutableErrorSetForValidation(),
                               angle::EntryPoint::GLTexEnviv, targetPacked, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateTexEnviv(context->getMutablePrivateState(),
                                    context->getMutablePrivateStateCache(), targetPacked,
@@ -2252,7 +2253,7 @@ void GL_APIENTRY GL_TexEnvx(GLenum target, GLenum pname, GLfixed param)
             (context->skipValidation() ||
              ValidateTexEnvx(context->getPrivateState(), context->getMutableErrorSetForValidation(),
                              angle::EntryPoint::GLTexEnvx, targetPacked, pnamePacked, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateTexEnvx(context->getMutablePrivateState(),
                                   context->getMutablePrivateStateCache(), targetPacked, pnamePacked,
@@ -2284,7 +2285,7 @@ void GL_APIENTRY GL_TexEnvxv(GLenum target, GLenum pname, const GLfixed *params)
              ValidateTexEnvxv(context->getPrivateState(),
                               context->getMutableErrorSetForValidation(),
                               angle::EntryPoint::GLTexEnvxv, targetPacked, pnamePacked, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateTexEnvxv(context->getMutablePrivateState(),
                                    context->getMutablePrivateStateCache(), targetPacked,
@@ -2314,7 +2315,7 @@ void GL_APIENTRY GL_TexParameterx(GLenum target, GLenum pname, GLfixed param)
         bool isCallValid = (context->skipValidation() ||
                             ValidateTexParameterx(context, angle::EntryPoint::GLTexParameterx,
                                                   targetPacked, pname, param));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             context->texParameterx(targetPacked, pname, param);
         }
@@ -2343,7 +2344,7 @@ void GL_APIENTRY GL_TexParameterxv(GLenum target, GLenum pname, const GLfixed *p
         bool isCallValid = (context->skipValidation() ||
                             ValidateTexParameterxv(context, angle::EntryPoint::GLTexParameterxv,
                                                    targetPacked, pname, params));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             context->texParameterxv(targetPacked, pname, params);
         }
@@ -2368,7 +2369,7 @@ void GL_APIENTRY GL_Translatef(GLfloat x, GLfloat y, GLfloat z)
                             ValidateTranslatef(context->getPrivateState(),
                                                context->getMutableErrorSetForValidation(),
                                                angle::EntryPoint::GLTranslatef, x, y, z));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateTranslatef(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), x, y, z);
@@ -2395,7 +2396,7 @@ void GL_APIENTRY GL_Translatex(GLfixed x, GLfixed y, GLfixed z)
                             ValidateTranslatex(context->getPrivateState(),
                                                context->getMutableErrorSetForValidation(),
                                                angle::EntryPoint::GLTranslatex, x, y, z));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             ContextPrivateTranslatex(context->getMutablePrivateState(),
                                      context->getMutablePrivateStateCache(), x, y, z);
@@ -2425,7 +2426,7 @@ void GL_APIENTRY GL_VertexPointer(GLint size, GLenum type, GLsizei stride, const
         bool isCallValid = (context->skipValidation() ||
                             ValidateVertexPointer(context, angle::EntryPoint::GLVertexPointer, size,
                                                   typePacked, stride, pointer));
-        if (isCallValid)
+        if (ANGLE_LIKELY(isCallValid))
         {
             context->vertexPointer(size, typePacked, stride, pointer);
         }

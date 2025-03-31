@@ -162,7 +162,8 @@ struct PerfMonitorTriplet
     FN(bufferSuballocationCalls)                   \
     FN(dynamicBufferAllocations)                   \
     FN(framebufferCacheSize)                       \
-    FN(pendingSubmissionGarbageObjects)
+    FN(pendingSubmissionGarbageObjects)            \
+    FN(graphicsDriverUniformsUpdated)
 
 #define ANGLE_DECLARE_PERF_COUNTER(COUNTER) uint64_t COUNTER;
 
@@ -414,14 +415,14 @@ inline bool IsLittleEndian()
 #define GL_X2_RGB10_SNORM_ANGLEX 0x6AF8
 
 #define ANGLE_CHECK_GL_ALLOC(context, result) \
-    ANGLE_CHECK(context, result, "Failed to allocate host memory", GL_OUT_OF_MEMORY)
+    ANGLE_CHECK(context, result, "Failed to allocate host memory.", GL_OUT_OF_MEMORY)
 
 #define ANGLE_CHECK_GL_MATH(context, result) \
     ANGLE_CHECK(context, result, "Integer overflow.", GL_INVALID_OPERATION)
 
 #define ANGLE_GL_UNREACHABLE(context) \
     UNREACHABLE();                    \
-    ANGLE_CHECK(context, false, "Unreachable Code.", GL_INVALID_OPERATION)
+    ANGLE_CHECK(context, false, "Unreachable code.", GL_INVALID_OPERATION)
 
 #if defined(ANGLE_WITH_LSAN)
 #    define ANGLE_SCOPED_DISABLE_LSAN() __lsan::ScopedDisabler lsanDisabler

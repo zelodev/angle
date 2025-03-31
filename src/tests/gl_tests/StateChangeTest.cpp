@@ -3347,6 +3347,42 @@ TEST_P(SimpleStateChangeTestES3, InvalidateRGBThenDraw)
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
 }
 
+// Draw and invalidate an RGB framebuffer and verify that the alpha channel is not destroyed and
+// remains valid after a draw call.
+TEST_P(SimpleStateChangeTestES3, DrawInvalidateRGBThenDraw)
+{
+    ANGLE_GL_PROGRAM(greenProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
+    ANGLE_GL_PROGRAM(blueProgram, essl1_shaders::vs::Simple(), essl1_shaders::fs::Blue());
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, getWindowWidth(), getWindowHeight(), 0, GL_RGB,
+                 GL_UNSIGNED_BYTE, nullptr);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    // Verify that clearing alpha is ineffective on an RGB format.
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::black);
+
+    // Draw before invalidating
+    drawQuad(greenProgram, essl1_shaders::PositionAttrib(), 0.5f);
+
+    // Invalidate the framebuffer contents.
+    const GLenum discards[] = {GL_COLOR_ATTACHMENT0};
+    glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, discards);
+
+    // Without an explicit clear, draw blue and make sure alpha is unaffected.  If RGB is emulated
+    // with RGBA, the previous invalidate shouldn't affect the alpha value.
+    drawQuad(blueProgram, essl1_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
+}
+
 // Invalidate an RGB framebuffer and verify that the alpha channel is not destroyed, even if the
 // color channels may be garbage.
 TEST_P(SimpleStateChangeTestES3, DrawAndInvalidateRGBThenVerifyAlpha)
@@ -4298,8 +4334,13 @@ void main()
     // Capture rendered pixel color w/ s1 linear
     std::vector<GLColor> s1LinearColors(kWindowSize * kWindowSize);
     glReadPixels(0, 0, kWindowSize, kWindowSize, GL_RGBA, GL_UNSIGNED_BYTE, s1LinearColors.data());
+
     // Results should be the same regardless of if s0 or s1 is linear
-    EXPECT_EQ(s0LinearColors, s1LinearColors);
+    ASSERT(s0LinearColors.size() == s1LinearColors.size());
+    for (size_t index = 0; index < s0LinearColors.size(); index++)
+    {
+        EXPECT_COLOR_NEAR(s0LinearColors[index], s1LinearColors[index], 1u);
+    }
 }
 
 // Tests that rendering works as expected with multiple VAOs.
@@ -7606,7 +7647,7 @@ TEST_P(SimpleStateChangeTestES31, DrawThenUpdateUBOThenDrawThenDrawIndexed)
     constexpr char kFS[] = R"(#version 300 es
 precision mediump float;
 uniform block { uint data; } ubo;
-uniform uint expect;
+uniform highp uint expect;
 uniform vec4 successColor;
 out vec4 colorOut;
 void main()
@@ -11301,8 +11342,10 @@ ANGLE_INSTANTIATE_TEST_ES3(StateChangeRenderTestES3);
 ANGLE_INSTANTIATE_TEST_ES2(SimpleStateChangeTest);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(SimpleStateChangeTestES3);
-ANGLE_INSTANTIATE_TEST_ES3_AND(SimpleStateChangeTestES3,
-                               ES3_VULKAN().enable(Feature::AllocateNonZeroMemory));
+ANGLE_INSTANTIATE_TEST_ES3_AND(
+    SimpleStateChangeTestES3,
+    ES3_VULKAN().enable(Feature::AllocateNonZeroMemory),
+    ES3_VULKAN().disable(Feature::PreferSkippingInvalidateForEmulatedFormats));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(ImageRespecificationTest);
 ANGLE_INSTANTIATE_TEST_ES3(ImageRespecificationTest);

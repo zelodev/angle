@@ -155,6 +155,7 @@ enum class RenderPassClosureReason
     GLReadPixels,
     IndexRangeReadback,
     VertexArrayStreaming,
+    VertexArrayLineLoop,
 
     InvalidEnum,
     EnumCount = InvalidEnum,
@@ -240,7 +241,7 @@ wgpu::RenderPassDepthStencilAttachment CreateNewDepthStencilAttachment(
     bool hasStencilValue = false);
 
 bool IsWgpuError(wgpu::WaitStatus waitStatus);
-bool IsWgpuError(WGPUBufferMapAsyncStatus mapBufferStatus);
+bool IsWgpuError(wgpu::MapAsyncStatus mapAsyncStatus);
 
 bool IsStripPrimitiveTopology(wgpu::PrimitiveTopology topology);
 
@@ -274,7 +275,10 @@ wgpu::FrontFace GetFrontFace(GLenum frontFace);
 wgpu::CullMode GetCullMode(gl::CullFaceMode mode, bool cullFaceEnabled);
 wgpu::ColorWriteMask GetColorWriteMask(bool r, bool g, bool b, bool a);
 
-wgpu::CompareFunction getCompareFunc(const GLenum glCompareFunc);
+wgpu::BlendFactor GetBlendFactor(gl::BlendFactorType blendFactor);
+wgpu::BlendOperation GetBlendEquation(gl::BlendEquationType blendEquation);
+
+wgpu::CompareFunction GetCompareFunc(const GLenum glCompareFunc, bool testEnabled);
 wgpu::StencilOperation getStencilOp(const GLenum glStencilOp);
 
 uint32_t GetFirstIndexForDrawCall(gl::DrawElementsType indexType, const void *indices);

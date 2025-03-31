@@ -10,7 +10,10 @@
 #include "common/mathutil.h"
 #include "common/utilities.h"
 #include "compiler/translator/BaseTypes.h"
+#include "compiler/translator/Common.h"
 #include "compiler/translator/Compiler.h"
+#include "compiler/translator/ImmutableString.h"
+#include "compiler/translator/ImmutableStringBuilder.h"
 #include "compiler/translator/InfoSink.h"
 #include "compiler/translator/IntermNode.h"
 #include "compiler/translator/SymbolUniqueId.h"
@@ -87,7 +90,147 @@ bool RecordUniformBlockMetadata(TIntermBlock *root, UniformBlockMetadata &outMet
     return true;
 }
 
-bool OutputUniformBlocks(TCompiler *compiler, TIntermBlock *root)
+bool OutputUniformWrapperStructsAndConversions(
+    TInfoSinkBase &output,
+    const WGSLGenerationMetadataForUniforms &wgslGenerationMetadataForUniforms)
+{
+
+    auto generate16AlignedWrapperStruct = [&output](const TType &type) {
+        output << "struct " << MakeUniformWrapperStructName(&type) << "\n{\n";
+        output << "  @align(16) " << kWrappedStructFieldName << " : ";
+        WriteWgslType(output, type, {});
+        output << "\n};\n";
+    };
+
+    bool generatedVec2WrapperStruct = false;
+
+    for (const TType &type : wgslGenerationMetadataForUniforms.arrayElementTypesInUniforms)
+    {
+        // Structs don't need wrapper structs.
+        ASSERT(type.getStruct() == nullptr);
+        // Multidimensional arrays not currently supported in uniforms
+        ASSERT(!type.isArray());
+
+        if (type.isVector() && type.getNominalSize() == 2)
+        {
+            generatedVec2WrapperStruct = true;
+        }
+        generate16AlignedWrapperStruct(type);
+    }
+
+    // matCx2 is represented as array<ANGLE_wrapped_vec2, C> so if there are matCx2s we need to
+    // generate an ANGLE_wrapped_vec2 struct.
+    if (!wgslGenerationMetadataForUniforms.outputMatCx2Conversion.empty() &&
+        !generatedVec2WrapperStruct)
+    {
+        generate16AlignedWrapperStruct(*new TType(TBasicType::EbtFloat, 2));
+    }
+
+    for (const TType &type :
+         wgslGenerationMetadataForUniforms.arrayElementTypesThatNeedUnwrappingConversions)
+    {
+        // Should be a subset of the types that have had wrapper structs generated above, otherwise
+        // it's impossible to unwrap them!
+        TType innerType = type;
+        innerType.toArrayElementType();
+        ASSERT(wgslGenerationMetadataForUniforms.arrayElementTypesInUniforms.count(innerType) != 0);
+
+        // This could take ptr<uniform, typeName>, with the unrestricted_pointer_parameters
+        // extension. This is probably fine.
+        output << "fn " << MakeUnwrappingArrayConversionFunctionName(&type) << "(wrappedArr : ";
+        WriteWgslType(output, type, {WgslAddressSpace::Uniform});
+        output << ") -> ";
+        WriteWgslType(output, type, {WgslAddressSpace::NonUniform});
+        output << "\n{\n";
+        output << "  var retVal : ";
+        WriteWgslType(output, type, {WgslAddressSpace::NonUniform});
+        output << ";\n";
+        output << "  for (var i : u32 = 0; i < " << type.getOutermostArraySize() << "; i++) {;\n";
+        output << "    retVal[i] = wrappedArr[i]." << kWrappedStructFieldName << ";\n";
+        output << "  }\n";
+        output << "  return retVal;\n";
+        output << "}\n";
+    }
+
+    for (const TType &type : wgslGenerationMetadataForUniforms.outputMatCx2Conversion)
+    {
+        ASSERT(type.isMatrix() && type.getRows() == 2);
+        output << "fn " << MakeMatCx2ConversionFunctionName(&type) << "(mangledMatrix : ";
+
+        WriteWgslType(output, type, {WgslAddressSpace::Uniform});
+        output << ") -> ";
+        WriteWgslType(output, type, {WgslAddressSpace::NonUniform});
+        output << "\n{\n";
+        output << "  var retVal : ";
+        WriteWgslType(output, type, {WgslAddressSpace::NonUniform});
+        output << ";\n";
+
+        if (type.isArray())
+        {
+            output << "  for (var i : u32 = 0; i < " << type.getOutermostArraySize()
+                   << "; i++) {;\n";
+            output << "    retVal[i] = ";
+        }
+        else
+        {
+            output << "  retVal = ";
+        }
+
+        TType baseType = type;
+        baseType.toArrayBaseType();
+        WriteWgslType(output, baseType, {WgslAddressSpace::NonUniform});
+        output << "(";
+        for (uint8_t i = 0; i < type.getCols(); i++)
+        {
+            if (i != 0)
+            {
+                output << ", ";
+            }
+            // The mangled matrix is an array and the elements are wrapped vec2s, which can be
+            // passed directly to the matCx2 constructor.
+            output << "mangledMatrix" << (type.isArray() ? "[i]" : "") << "[" << static_cast<int>(i)
+                   << "]." << kWrappedStructFieldName;
+        }
+        output << ");\n";
+
+        if (type.isArray())
+        {
+            // Close the for loop.
+            output << "  }\n";
+        }
+        output << "  return retVal;\n";
+        output << "}\n";
+    }
+
+    return true;
+}
+
+ImmutableString MakeUnwrappingArrayConversionFunctionName(const TType *type)
+{
+    ASSERT(type->getNumArraySizes() <= 1);
+    ImmutableString arrStr = type->isArray() ? BuildConcatenatedImmutableString(
+                                                   "Array", type->getOutermostArraySize(), "_")
+                                             : kEmptyImmutableString;
+    return BuildConcatenatedImmutableString("ANGLE_Convert_", arrStr,
+                                            MakeUniformWrapperStructName(type), "_ElementsTo_",
+                                            type->getBuiltInTypeNameString(), "_Elements");
+}
+
+bool IsMatCx2(const TType *type)
+{
+    return type->isMatrix() && type->getRows() == 2;
+}
+
+ImmutableString MakeMatCx2ConversionFunctionName(const TType *type)
+{
+    ASSERT(type->getNumArraySizes() <= 1);
+    ImmutableString arrStr = type->isArray() ? BuildConcatenatedImmutableString(
+                                                   "Array", type->getOutermostArraySize(), "_")
+                                             : kEmptyImmutableString;
+    return BuildConcatenatedImmutableString("ANGLE_Convert_", arrStr, "Mat", type->getCols(), "x2");
+}
+
+bool OutputUniformBlocksAndSamplers(TCompiler *compiler, TIntermBlock *root)
 {
     // TODO(anglebug.com/42267100): This should eventually just be handled the same way as a regular
     // UBO, like in Vulkan which create a block out of the default uniforms with a traverser:
@@ -100,7 +243,7 @@ bool OutputUniformBlocks(TCompiler *compiler, TIntermBlock *root)
     bool outputStructHeader = false;
     for (const ShaderVariable &shaderVar : basicUniforms)
     {
-        if (gl::IsOpaqueType(shaderVar.type))
+        if (gl::IsOpaqueType(shaderVar.type) || !shaderVar.active)
         {
             continue;
         }
@@ -110,27 +253,35 @@ bool OutputUniformBlocks(TCompiler *compiler, TIntermBlock *root)
             // TODO(anglebug.com/42267100): put gl_DepthRange into default uniform block.
             continue;
         }
+
+        // TODO(anglebug.com/42267100): some types will NOT match std140 layout here, namely matCx2,
+        // bool, and arrays with stride less than 16.
+        // (this check does not cover the unsupported case where there is an array of structs of
+        // size < 16).
+        if (shaderVar.type == GL_BOOL)
+        {
+            return false;
+        }
+
+        // Some uniform variables might have been deleted, for example if they were structs that
+        // only contained samplers (which are pulled into separate default uniforms).
+        auto globalVarIter = globalVars.find(shaderVar.name);
+        if (globalVarIter == globalVars.end())
+        {
+            continue;
+        }
+
         if (!outputStructHeader)
         {
             output << "struct ANGLE_DefaultUniformBlock {\n";
             outputStructHeader = true;
         }
         output << "  ";
-        // TODO(anglebug.com/42267100): some types will NOT match std140 layout here, namely matCx2,
-        // bool, and arrays with stride less than 16.
-        // (this check does not cover the unsupported case where there is an array of structs of
-        // size < 16).
-        if (gl::VariableRowCount(shaderVar.type) == 2 || shaderVar.type == GL_BOOL ||
-            (shaderVar.isArray() && !shaderVar.isStruct() &&
-             gl::VariableComponentCount(shaderVar.type) < 3))
-        {
-            return false;
-        }
         output << shaderVar.name << " : ";
 
-        TIntermDeclaration *declNode = globalVars.find(shaderVar.name)->second;
+        TIntermDeclaration *declNode = globalVarIter->second;
         const TVariable *astVar      = &ViewDeclaration(*declNode).symbol.variable();
-        WriteWgslType(output, astVar->getType());
+        WriteWgslType(output, astVar->getType(), {WgslAddressSpace::Uniform});
 
         output << ",\n";
     }
@@ -150,7 +301,61 @@ bool OutputUniformBlocks(TCompiler *compiler, TIntermBlock *root)
                << kDefaultUniformBlockVarType << ";\n";
     }
 
+    for (const auto &globalVarIter : globalVars)
+    {
+        TIntermDeclaration *declNode = globalVarIter.second;
+        ASSERT(declNode);
+
+        const TIntermSymbol *declSymbol = &ViewDeclaration(*declNode).symbol;
+        const TType &declType           = declSymbol->getType();
+        if (!declType.isSampler())
+        {
+            continue;
+        }
+
+        // Note that this may output ignored symbols.
+        output << kTextureSamplerBindingMarker << kAngleSamplerPrefix << declSymbol->getName()
+               << " : ";
+        WriteWgslSamplerType(output, declType, WgslSamplerTypeConfig::Sampler);
+        output << ";\n";
+
+        output << kTextureSamplerBindingMarker << kAngleTexturePrefix << declSymbol->getName()
+               << " : ";
+        WriteWgslSamplerType(output, declType, WgslSamplerTypeConfig::Texture);
+        output << ";\n";
+    }
+
     return true;
+}
+
+std::string WGSLGetMappedSamplerName(const std::string &originalName)
+{
+    std::string samplerName = originalName;
+
+    // Samplers in structs are extracted.
+    std::replace(samplerName.begin(), samplerName.end(), '.', '_');
+
+    // Remove array elements
+    auto out = samplerName.begin();
+    for (auto in = samplerName.begin(); in != samplerName.end(); in++)
+    {
+        if (*in == '[')
+        {
+            while (*in != ']')
+            {
+                in++;
+                ASSERT(in != samplerName.end());
+            }
+        }
+        else
+        {
+            *out++ = *in;
+        }
+    }
+
+    samplerName.erase(out, samplerName.end());
+
+    return samplerName;
 }
 
 }  // namespace sh

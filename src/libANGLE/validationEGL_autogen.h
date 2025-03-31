@@ -232,6 +232,10 @@ bool ValidateCreateDeviceANGLE(const ValidationContext *val,
                                const EGLAttrib *attrib_list);
 bool ValidateReleaseDeviceANGLE(const ValidationContext *val, const egl::Device *devicePacked);
 
+// EGL_ANGLE_device_vulkan
+bool ValidateLockVulkanQueueANGLE(const ValidationContext *val, const egl::Display *dpyPacked);
+bool ValidateUnlockVulkanQueueANGLE(const ValidationContext *val, const egl::Display *dpyPacked);
+
 // EGL_ANGLE_external_context_and_surface
 bool ValidateAcquireExternalContextANGLE(const ValidationContext *val,
                                          const egl::Display *dpyPacked,
@@ -314,12 +318,6 @@ bool ValidateStreamPostD3DTextureANGLE(const ValidationContext *val,
                                        const egl::Stream *streamPacked,
                                        const void *texture,
                                        const AttributeMap &attrib_listPacked);
-
-// EGL_ANGLE_swap_with_frame_token
-bool ValidateSwapBuffersWithFrameTokenANGLE(const ValidationContext *val,
-                                            const egl::Display *dpyPacked,
-                                            SurfaceID surfacePacked,
-                                            EGLFrameTokenANGLE frametoken);
 
 // EGL_ANGLE_sync_control_rate
 bool ValidateGetMscRateANGLE(const ValidationContext *val,

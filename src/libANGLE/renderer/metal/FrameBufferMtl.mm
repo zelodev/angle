@@ -1009,7 +1009,7 @@ angle::Result FramebufferMtl::updateColorRenderTarget(const gl::Context *context
 {
     ASSERT(colorIndexGL < mColorRenderTargets.size());
     // Reset load store action
-    mRenderPassDesc.colorAttachments[colorIndexGL].reset();
+    mRenderPassDesc.colorAttachments[colorIndexGL] = {};
     return updateCachedRenderTarget(context, mState.getColorAttachment(colorIndexGL),
                                     &mColorRenderTargets[colorIndexGL]);
 }
@@ -1017,14 +1017,14 @@ angle::Result FramebufferMtl::updateColorRenderTarget(const gl::Context *context
 angle::Result FramebufferMtl::updateDepthRenderTarget(const gl::Context *context)
 {
     // Reset load store action
-    mRenderPassDesc.depthAttachment.reset();
+    mRenderPassDesc.depthAttachment = {};
     return updateCachedRenderTarget(context, mState.getDepthAttachment(), &mDepthRenderTarget);
 }
 
 angle::Result FramebufferMtl::updateStencilRenderTarget(const gl::Context *context)
 {
     // Reset load store action
-    mRenderPassDesc.stencilAttachment.reset();
+    mRenderPassDesc.stencilAttachment = {};
     return updateCachedRenderTarget(context, mState.getStencilAttachment(), &mStencilRenderTarget);
 }
 
@@ -1096,7 +1096,7 @@ angle::Result FramebufferMtl::prepareRenderPass(const gl::Context *context,
         }
         else
         {
-            colorAttachment.reset();
+            colorAttachment = {};
         }
     }
 
@@ -1108,7 +1108,7 @@ angle::Result FramebufferMtl::prepareRenderPass(const gl::Context *context,
     }
     else
     {
-        desc.depthAttachment.reset();
+        desc.depthAttachment = {};
     }
 
     if (mStencilRenderTarget)
@@ -1119,7 +1119,7 @@ angle::Result FramebufferMtl::prepareRenderPass(const gl::Context *context,
     }
     else
     {
-        desc.stencilAttachment.reset();
+        desc.stencilAttachment = {};
     }
 
     if (desc.numColorAttachments == 0 && mDepthRenderTarget == nullptr &&
@@ -1600,7 +1600,8 @@ angle::Result FramebufferMtl::readPixelsImpl(const gl::Context *context,
         {
             return angle::Result::Stop;
         }
-        ANGLE_MTL_CHECK(contextMtl, texture->samples() == 1, GL_INVALID_OPERATION);
+        ANGLE_CHECK(contextMtl, texture->samples() == 1, gl::err::kInternalError,
+                    GL_INVALID_OPERATION);
     }
 
     const mtl::Format &readFormat        = renderTarget->getFormat();
@@ -1673,8 +1674,8 @@ angle::Result FramebufferMtl::readPixelsToPBO(const gl::Context *context,
 
     ContextMtl *contextMtl = mtl::GetImpl(context);
 
-    ANGLE_MTL_CHECK(contextMtl, packPixelsParams.offset <= std::numeric_limits<uint32_t>::max(),
-                    GL_INVALID_OPERATION);
+    ANGLE_CHECK_GL_MATH(contextMtl,
+                        packPixelsParams.offset <= std::numeric_limits<uint32_t>::max());
     uint32_t offset = static_cast<uint32_t>(packPixelsParams.offset);
 
     BufferMtl *packBufferMtl = mtl::GetImpl(packPixelsParams.packBuffer);
@@ -1732,7 +1733,7 @@ angle::Result FramebufferMtl::readPixelsToBuffer(const gl::Context *context,
                             break;
                         default:
                             // Unsupported format.
-                            ANGLE_MTL_CHECK(contextMtl, false, GL_INVALID_ENUM);
+                            ANGLE_GL_UNREACHABLE(contextMtl);
                     }
                     break;
                 }

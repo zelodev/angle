@@ -385,6 +385,19 @@ ANGLE_INLINE ScopedContextMutexLock GetContextLock_ReleaseDeviceANGLE(Thread *th
     return {};
 }
 
+// EGL_ANGLE_device_vulkan
+ANGLE_INLINE ScopedContextMutexLock GetContextLock_LockVulkanQueueANGLE(Thread *thread,
+                                                                        egl::Display *dpyPacked)
+{
+    return {};
+}
+
+ANGLE_INLINE ScopedContextMutexLock GetContextLock_UnlockVulkanQueueANGLE(Thread *thread,
+                                                                          egl::Display *dpyPacked)
+{
+    return {};
+}
+
 // EGL_ANGLE_external_context_and_surface
 ANGLE_INLINE ScopedContextMutexLock
 GetContextLock_AcquireExternalContextANGLE(Thread *thread, egl::Display *dpyPacked)
@@ -498,13 +511,6 @@ ANGLE_INLINE ScopedContextMutexLock
 GetContextLock_StreamPostD3DTextureANGLE(Thread *thread, egl::Display *dpyPacked)
 {
     return {};
-}
-
-// EGL_ANGLE_swap_with_frame_token
-ANGLE_INLINE ScopedContextMutexLock
-GetContextLock_SwapBuffersWithFrameTokenANGLE(Thread *thread, egl::Display *dpyPacked)
-{
-    return TryLockCurrentContext(thread);
 }
 
 // EGL_ANGLE_sync_control_rate

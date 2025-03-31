@@ -66,6 +66,10 @@ ANGLE_EXPORT EGLDeviceEXT EGLAPIENTRY EGL_CreateDeviceANGLE(EGLint device_type,
                                                             const EGLAttrib *attrib_list);
 ANGLE_EXPORT EGLBoolean EGLAPIENTRY EGL_ReleaseDeviceANGLE(EGLDeviceEXT device);
 
+// EGL_ANGLE_device_vulkan
+ANGLE_EXPORT void EGLAPIENTRY EGL_LockVulkanQueueANGLE(EGLDisplay dpy);
+ANGLE_EXPORT void EGLAPIENTRY EGL_UnlockVulkanQueueANGLE(EGLDisplay dpy);
+
 // EGL_ANGLE_external_context_and_surface
 ANGLE_EXPORT void EGLAPIENTRY EGL_AcquireExternalContextANGLE(EGLDisplay dpy,
                                                               EGLSurface drawAndRead);
@@ -128,12 +132,6 @@ ANGLE_EXPORT EGLBoolean EGLAPIENTRY EGL_StreamPostD3DTextureANGLE(EGLDisplay dpy
                                                                   EGLStreamKHR stream,
                                                                   void *texture,
                                                                   const EGLAttrib *attrib_list);
-
-// EGL_ANGLE_swap_with_frame_token
-ANGLE_EXPORT EGLBoolean EGLAPIENTRY
-EGL_SwapBuffersWithFrameTokenANGLE(EGLDisplay dpy,
-                                   EGLSurface surface,
-                                   EGLFrameTokenANGLE frametoken);
 
 // EGL_ANGLE_sync_control_rate
 ANGLE_EXPORT EGLBoolean EGLAPIENTRY EGL_GetMscRateANGLE(EGLDisplay dpy,

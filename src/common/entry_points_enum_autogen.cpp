@@ -370,6 +370,8 @@ const char *GetEntryPointName(EntryPoint ep)
             return "eglLabelObjectKHR";
         case EntryPoint::EGLLockSurfaceKHR:
             return "eglLockSurfaceKHR";
+        case EntryPoint::EGLLockVulkanQueueANGLE:
+            return "eglLockVulkanQueueANGLE";
         case EntryPoint::EGLMakeCurrent:
             return "eglMakeCurrent";
         case EntryPoint::EGLPostSubBufferNV:
@@ -458,14 +460,14 @@ const char *GetEntryPointName(EntryPoint ep)
             return "eglSwapBuffers";
         case EntryPoint::EGLSwapBuffersWithDamageKHR:
             return "eglSwapBuffersWithDamageKHR";
-        case EntryPoint::EGLSwapBuffersWithFrameTokenANGLE:
-            return "eglSwapBuffersWithFrameTokenANGLE";
         case EntryPoint::EGLSwapInterval:
             return "eglSwapInterval";
         case EntryPoint::EGLTerminate:
             return "eglTerminate";
         case EntryPoint::EGLUnlockSurfaceKHR:
             return "eglUnlockSurfaceKHR";
+        case EntryPoint::EGLUnlockVulkanQueueANGLE:
+            return "eglUnlockVulkanQueueANGLE";
         case EntryPoint::EGLWaitClient:
             return "eglWaitClient";
         case EntryPoint::EGLWaitGL:

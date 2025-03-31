@@ -240,6 +240,9 @@
 
 // Linux only failures
 
+388052193 LINUX UBSAN : dEQP-GLES3.functional.fragment_ops.interaction.basic_shader.* = SKIP
+
+
 // While loops with 'continue' seem flaky on Linux. (Possibly all GL renderers)
 42260333 LINUX OPENGL : dEQP-GLES3.functional.shaders.loops.while_constant_iterations.conditional_continue_vertex = FAIL
 42260333 LINUX OPENGL : dEQP-GLES3.functional.shaders.loops.while_constant_iterations.conditional_continue_fragment = FAIL
@@ -866,7 +869,6 @@ b/328156792 PINEAPPLE VULKAN : dEQP-GLES3.functional.uniform_api.value.assigned.
 42262773 VULKAN : dEQP-GLES3.functional.transform_feedback.random.* = FAIL
 
 // BGRA failures
-42267264 : dEQP-GLES3.functional.fbo.completeness.renderable.renderbuffer*bgra = FAIL
 42267264 MAC : dEQP-GLES3.functional.texture.filtering.2d_array.formats.bgra* = FAIL
 
 // Tests failing on SwS due to ES 3.2 being enabled for testing regardless of support.

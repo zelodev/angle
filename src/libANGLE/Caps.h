@@ -90,6 +90,9 @@ void InitMinimumTextureCapsMap(const Version &clientVersion,
 // present. Does not determine if they are natively supported without decompression.
 bool DetermineCompressedTextureETCSupport(const TextureCapsMap &textureCaps);
 
+// Determine support for signed normalized format renderability.
+bool DetermineRenderSnormSupport(const TextureCapsMap &textureCaps, bool textureNorm16EXT);
+
 // Pointer to a boolean member of the Extensions struct
 using ExtensionBool = bool Extensions::*;
 
@@ -388,7 +391,6 @@ struct Caps
 
     // GL_ANGLE_shader_pixel_local_storage
     GLuint maxPixelLocalStoragePlanes                       = 0;
-    GLuint maxColorAttachmentsWithActivePixelLocalStorage   = 0;
     GLuint maxCombinedDrawBuffersAndPixelLocalStoragePlanes = 0;
 
     // GL_EXT_shader_pixel_local_storage.
@@ -618,12 +620,6 @@ struct DisplayExtensions
     // EGL_IMG_context_priority
     bool contextPriority = false;
 
-    // EGL_ANGLE_ggp_stream_descriptor
-    bool ggpStreamDescriptor = false;
-
-    // EGL_ANGLE_swap_with_frame_token
-    bool swapWithFrameToken = false;
-
     // EGL_KHR_gl_colorspace
     bool glColorspace = false;
 
@@ -799,6 +795,9 @@ struct ClientExtensions
 
     // EGL_ANGLE_platform_angle_vulkan
     bool platformANGLEVulkan = false;
+
+    // EGL_ANGLE_platform_angle_vulkan_device_uuid
+    bool platformANGLEVulkanDeviceUUID = false;
 
     // EGL_ANGLE_platform_angle_metal
     bool platformANGLEMetal = false;

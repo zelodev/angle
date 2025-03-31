@@ -112,20 +112,9 @@ constexpr GraphicsPipelineTransitionBits kPipelineShadersTransitionBitsMask =
                                          TransitionBits(kPipelineShadersDescOffset)) &
     ~GraphicsPipelineTransitionBits::Mask(TransitionBits(kPipelineShadersDescOffset));
 
-constexpr GraphicsPipelineTransitionBits kPipelineFragmentOutputTransitionBitsMask =
-    GraphicsPipelineTransitionBits::Mask(TransitionBits(kPipelineFragmentOutputDescSize) +
-                                         TransitionBits(kPipelineFragmentOutputDescOffset)) &
-    ~GraphicsPipelineTransitionBits::Mask(TransitionBits(kPipelineFragmentOutputDescOffset));
-
-constexpr GraphicsPipelineTransitionBits kPipelineVertexInputTransitionBitsMask =
-    GraphicsPipelineTransitionBits::Mask(TransitionBits(kPipelineVertexInputDescSize) +
-                                         TransitionBits(kPipelineVertexInputDescOffset)) &
-    ~GraphicsPipelineTransitionBits::Mask(TransitionBits(kPipelineVertexInputDescOffset));
-
 bool GraphicsPipelineHasVertexInput(GraphicsPipelineSubset subset)
 {
-    return subset == GraphicsPipelineSubset::Complete ||
-           subset == GraphicsPipelineSubset::VertexInput;
+    return subset == GraphicsPipelineSubset::Complete;
 }
 
 bool GraphicsPipelineHasShaders(GraphicsPipelineSubset subset)
@@ -135,13 +124,12 @@ bool GraphicsPipelineHasShaders(GraphicsPipelineSubset subset)
 
 bool GraphicsPipelineHasShadersOrFragmentOutput(GraphicsPipelineSubset subset)
 {
-    return subset != GraphicsPipelineSubset::VertexInput;
+    return true;
 }
 
 bool GraphicsPipelineHasFragmentOutput(GraphicsPipelineSubset subset)
 {
-    return subset == GraphicsPipelineSubset::Complete ||
-           subset == GraphicsPipelineSubset::FragmentOutput;
+    return subset == GraphicsPipelineSubset::Complete;
 }
 
 uint8_t PackGLBlendOp(gl::BlendEquationType blendOp)
@@ -393,9 +381,17 @@ void DeriveRenderingInfo(Renderer *renderer,
 
         if (subset == DynamicRenderingInfoSubset::Full)
         {
+            ASSERT(static_cast<vk::ImageLayout>(ops[attachmentCount].initialLayout) !=
+                       vk::ImageLayout::SharedPresent ||
+                   static_cast<vk::ImageLayout>(ops[attachmentCount].finalLayout) ==
+                       vk::ImageLayout::SharedPresent);
             const VkImageLayout layout = vk::ConvertImageLayoutToVkImageLayout(
-                renderer, static_cast<vk::ImageLayout>(ops[attachmentCount].initialLayout));
-            const VkImageLayout resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                static_cast<vk::ImageLayout>(ops[attachmentCount].initialLayout));
+            const VkImageLayout resolveImageLayout =
+                (static_cast<vk::ImageLayout>(ops[attachmentCount].finalResolveLayout) ==
+                         vk::ImageLayout::SharedPresent
+                     ? VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR
+                     : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             const VkResolveModeFlagBits resolveMode =
                 isYUVExternalFormat ? VK_RESOLVE_MODE_EXTERNAL_FORMAT_DOWNSAMPLE_ANDROID
                 : desc.hasColorResolveAttachment(colorIndexGL) ? VK_RESOLVE_MODE_AVERAGE_BIT
@@ -411,6 +407,19 @@ void DeriveRenderingInfo(Renderer *renderer,
             // See description of RenderPassFramebuffer::mImageViews regarding the layout of the
             // attachmentViews.  In short, the draw attachments are packed, while the resolve
             // attachments are not.
+            if (isYUVExternalFormat && renderer->nullColorAttachmentWithExternalFormatResolve())
+            {
+                // If nullColorAttachmentWithExternalFormatResolve is VK_TRUE, attachmentViews has
+                // no color attachment imageView and only has resolveImageView.
+                infoOut->colorAttachmentInfo[attachmentCount.get()].imageView = VK_NULL_HANDLE;
+                infoOut->colorAttachmentInfo[attachmentCount.get()].resolveImageView =
+                    attachmentViews[attachmentCount.get()];
+                infoOut->colorAttachmentInfo[attachmentCount.get()].clearValue =
+                    clearValues[attachmentCount];
+
+                ++attachmentCount;
+                continue;
+            }
             infoOut->colorAttachmentInfo[attachmentCount.get()].imageView =
                 attachmentViews[attachmentCount.get()];
             if (resolveMode != VK_RESOLVE_MODE_NONE)
@@ -456,7 +465,7 @@ void DeriveRenderingInfo(Renderer *renderer,
                 angleFormat.stencilBits != 0 && desc.hasStencilResolveAttachment();
 
             const VkImageLayout layout = ConvertImageLayoutToVkImageLayout(
-                renderer, static_cast<vk::ImageLayout>(ops[attachmentCount].initialLayout));
+                static_cast<vk::ImageLayout>(ops[attachmentCount].initialLayout));
             const VkImageLayout resolveImageLayout =
                 VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             const VkResolveModeFlagBits depthResolveMode =
@@ -540,10 +549,17 @@ void DeriveRenderingInfo(Renderer *renderer,
     }
 }
 
-void AttachPipelineRenderingInfo(Context *context,
+enum class ShadersStateSource
+{
+    ThisPipeline,
+    PipelineLibrary,
+};
+
+void AttachPipelineRenderingInfo(ErrorContext *context,
                                  const RenderPassDesc &desc,
                                  const DynamicRenderingInfo &renderingInfo,
                                  GraphicsPipelineSubset subset,
+                                 ShadersStateSource shadersSource,
                                  VkPipelineRenderingCreateInfoKHR *pipelineRenderingInfoOut,
                                  VkRenderingAttachmentLocationInfoKHR *attachmentLocationsOut,
                                  VkRenderingInputAttachmentIndexInfoKHR *inputLocationsOut,
@@ -572,8 +588,11 @@ void AttachPipelineRenderingInfo(Context *context,
         renderingInfo.colorAttachmentLocations.data();
     AddToPNextChain(createInfoOut, attachmentLocationsOut);
 
-    // Note: VkRenderingInputAttachmentIndexInfoKHR only affects the fragment stage subset.
-    if (desc.hasColorFramebufferFetch() && GraphicsPipelineHasShaders(subset))
+    // Note: VkRenderingInputAttachmentIndexInfoKHR only affects the fragment stage subset, and is
+    // needed only when the shaders stage is not coming from a pipeline library (where this mapping
+    // is already specified).
+    if (desc.hasColorFramebufferFetch() && shadersSource == ShadersStateSource::ThisPipeline &&
+        GraphicsPipelineHasShaders(subset))
     {
         *inputLocationsOut       = {};
         inputLocationsOut->sType = VK_STRUCTURE_TYPE_RENDERING_INPUT_ATTACHMENT_INDEX_INFO_KHR;
@@ -631,9 +650,9 @@ void UnpackAttachmentDesc(Renderer *renderer,
     desc->stencilStoreOp =
         ConvertRenderPassStoreOpToVkStoreOp(static_cast<RenderPassStoreOp>(ops.stencilStoreOp));
     desc->initialLayout =
-        ConvertImageLayoutToVkImageLayout(renderer, static_cast<ImageLayout>(ops.initialLayout));
+        ConvertImageLayoutToVkImageLayout(static_cast<ImageLayout>(ops.initialLayout));
     desc->finalLayout =
-        ConvertImageLayoutToVkImageLayout(renderer, static_cast<ImageLayout>(ops.finalLayout));
+        ConvertImageLayoutToVkImageLayout(static_cast<ImageLayout>(ops.finalLayout));
 }
 
 struct AttachmentInfo
@@ -649,7 +668,8 @@ void UnpackColorResolveAttachmentDesc(Renderer *renderer,
                                       VkAttachmentDescription2 *desc,
                                       angle::FormatID formatID,
                                       const AttachmentInfo &info,
-                                      ImageLayout finalLayout)
+                                      VkImageLayout initialLayout,
+                                      VkImageLayout finalLayout)
 {
     *desc        = {};
     desc->sType  = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
@@ -673,11 +693,11 @@ void UnpackColorResolveAttachmentDesc(Renderer *renderer,
         info.isInvalidated ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
     desc->stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     desc->stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    desc->initialLayout  = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    desc->finalLayout    = ConvertImageLayoutToVkImageLayout(renderer, finalLayout);
+    desc->initialLayout  = initialLayout;
+    desc->finalLayout    = finalLayout;
 }
 
-void UnpackDepthStencilResolveAttachmentDesc(vk::Context *context,
+void UnpackDepthStencilResolveAttachmentDesc(vk::ErrorContext *context,
                                              VkAttachmentDescription2 *desc,
                                              angle::FormatID formatID,
                                              const AttachmentInfo &depthInfo,
@@ -1119,7 +1139,7 @@ void InitializeUnresolveSubpassDependencies(const SubpassVector<VkSubpassDescrip
 // masks in preparation of potential framebuffer fetch and advanced blend barriers.  This is known
 // not to add any overhead on any hardware we have been able to gather information from.
 void InitializeDefaultSubpassSelfDependencies(
-    Context *context,
+    ErrorContext *context,
     const RenderPassDesc &desc,
     uint32_t subpassIndex,
     std::vector<VkSubpassDependency2> *subpassDependencies)
@@ -1166,7 +1186,7 @@ void InitializeDefaultSubpassSelfDependencies(
     }
 }
 
-void InitializeMSRTSS(Context *context,
+void InitializeMSRTSS(ErrorContext *context,
                       uint8_t renderToTextureSamples,
                       VkSubpassDescription2 *subpass,
                       VkSubpassDescriptionDepthStencilResolve *msrtssResolve,
@@ -1192,7 +1212,7 @@ void InitializeMSRTSS(Context *context,
     AppendToPNextChain(subpass, msrtss);
 }
 
-void SetRenderPassViewMask(Context *context,
+void SetRenderPassViewMask(ErrorContext *context,
                            const uint32_t *viewMask,
                            VkRenderPassCreateInfo2 *createInfo,
                            SubpassVector<VkSubpassDescription2> *subpassDesc)
@@ -1292,7 +1312,7 @@ void ToRenderPassMultiviewCreateInfo(const VkRenderPassCreateInfo2 &createInfo,
     AddToPNextChain(createInfo1, multiviewInfo);
 }
 
-angle::Result CreateRenderPass1(Context *context,
+angle::Result CreateRenderPass1(ErrorContext *context,
                                 const VkRenderPassCreateInfo2 &createInfo,
                                 uint8_t viewCount,
                                 RenderPass *renderPass)
@@ -2440,7 +2460,7 @@ PipelineState GetPipelineState(size_t stateIndex, bool *isRangedOut, size_t *sub
     out << "\\n";
 }
 
-[[maybe_unused]] void OutputAllPipelineState(Context *context,
+[[maybe_unused]] void OutputAllPipelineState(ErrorContext *context,
                                              std::ostream &out,
                                              const UnpackedPipelineState &pipeline,
                                              GraphicsPipelineSubset subset,
@@ -2556,7 +2576,7 @@ PipelineState GetPipelineState(size_t stateIndex, bool *isRangedOut, size_t *sub
 
 template <typename Hash>
 void DumpPipelineCacheGraph(
-    Context *context,
+    ErrorContext *context,
     const std::unordered_map<GraphicsPipelineDesc,
                              PipelineHelper,
                              Hash,
@@ -2589,17 +2609,9 @@ void DumpPipelineCacheGraph(
     const char *subsetTag         = "";
     switch (kSubset)
     {
-        case GraphicsPipelineSubset::VertexInput:
-            subsetDescription = "(vertex input)\\n";
-            subsetTag         = "VI_";
-            break;
         case GraphicsPipelineSubset::Shaders:
             subsetDescription = "(shaders)\\n";
             subsetTag         = "S_";
-            break;
-        case GraphicsPipelineSubset::FragmentOutput:
-            subsetDescription = "(fragment output)\\n";
-            subsetTag         = "FO_";
             break;
         default:
             break;
@@ -2701,69 +2713,7 @@ void MakeInvalidCachedObject(SharedDescriptorSetCacheKey *cacheKeyOut)
     *cacheKeyOut = SharedDescriptorSetCacheKey::MakeShared(VK_NULL_HANDLE);
 }
 
-angle::Result InitializePipelineFromLibraries(Context *context,
-                                              PipelineCacheAccess *pipelineCache,
-                                              const vk::PipelineLayout &pipelineLayout,
-                                              const vk::PipelineHelper &vertexInputPipeline,
-                                              const vk::PipelineHelper &shadersPipeline,
-                                              const vk::PipelineHelper &fragmentOutputPipeline,
-                                              const vk::GraphicsPipelineDesc &desc,
-                                              Pipeline *pipelineOut,
-                                              CacheLookUpFeedback *feedbackOut)
-{
-    // Nothing in the create info, everything comes from the libraries.
-    VkGraphicsPipelineCreateInfo createInfo = {};
-    createInfo.sType                        = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    createInfo.layout                       = pipelineLayout.getHandle();
-
-    if (context->getFeatures().preferDynamicRendering.enabled && desc.getRenderPassFoveation())
-    {
-        createInfo.flags |= VK_PIPELINE_CREATE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
-    }
-
-    const std::array<VkPipeline, 3> pipelines = {
-        vertexInputPipeline.getPipeline().getHandle(),
-        shadersPipeline.getPipeline().getHandle(),
-        fragmentOutputPipeline.getPipeline().getHandle(),
-    };
-
-    // Specify the three subsets as input libraries.
-    VkPipelineLibraryCreateInfoKHR libraryInfo = {};
-    libraryInfo.sType                          = VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR;
-    libraryInfo.libraryCount                   = 3;
-    libraryInfo.pLibraries                     = pipelines.data();
-
-    AddToPNextChain(&createInfo, &libraryInfo);
-
-    // If supported, get feedback.
-    VkPipelineCreationFeedback feedback               = {};
-    VkPipelineCreationFeedbackCreateInfo feedbackInfo = {};
-    feedbackInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO;
-
-    const bool supportsFeedback = context->getFeatures().supportsPipelineCreationFeedback.enabled;
-    if (supportsFeedback)
-    {
-        feedbackInfo.pPipelineCreationFeedback = &feedback;
-        AddToPNextChain(&createInfo, &feedbackInfo);
-    }
-
-    // Create the pipeline
-    ANGLE_VK_TRY(context, pipelineCache->createGraphicsPipeline(context, createInfo, pipelineOut));
-
-    if (supportsFeedback)
-    {
-        const bool cacheHit =
-            (feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) !=
-            0;
-
-        *feedbackOut = cacheHit ? CacheLookUpFeedback::Hit : CacheLookUpFeedback::Miss;
-        ApplyPipelineCreationFeedback(context, feedback);
-    }
-
-    return angle::Result::Continue;
-}
-
-bool ShouldDumpPipelineCacheGraph(Context *context)
+bool ShouldDumpPipelineCacheGraph(ErrorContext *context)
 {
     return kDumpPipelineCacheGraph && context->getRenderer()->isPipelineCacheGraphDumpEnabled();
 }
@@ -2793,16 +2743,9 @@ FramebufferFetchMode GetProgramFramebufferFetchMode(const gl::ProgramExecutable 
 
 GraphicsPipelineTransitionBits GetGraphicsPipelineTransitionBitsMask(GraphicsPipelineSubset subset)
 {
-    switch (subset)
+    if (subset == GraphicsPipelineSubset::Shaders)
     {
-        case GraphicsPipelineSubset::VertexInput:
-            return kPipelineVertexInputTransitionBitsMask;
-        case GraphicsPipelineSubset::Shaders:
-            return kPipelineShadersTransitionBitsMask;
-        case GraphicsPipelineSubset::FragmentOutput:
-            return kPipelineFragmentOutputTransitionBitsMask;
-        default:
-            break;
+        return kPipelineShadersTransitionBitsMask;
     }
 
     ASSERT(subset == GraphicsPipelineSubset::Complete);
@@ -3008,7 +2951,7 @@ void RenderPassDesc::setLegacyDither(bool enabled)
 }
 
 void RenderPassDesc::beginRenderPass(
-    Context *context,
+    ErrorContext *context,
     PrimaryCommandBuffer *primary,
     const RenderPass &renderPass,
     VkFramebuffer framebuffer,
@@ -3033,7 +2976,7 @@ void RenderPassDesc::beginRenderPass(
 }
 
 void RenderPassDesc::beginRendering(
-    Context *context,
+    ErrorContext *context,
     PrimaryCommandBuffer *primary,
     const gl::Rectangle &renderArea,
     VkSubpassContents subpassContents,
@@ -3095,7 +3038,7 @@ void RenderPassDesc::populateRenderingInheritanceInfo(
 }
 
 void RenderPassDesc::updatePerfCounters(
-    Context *context,
+    ErrorContext *context,
     const FramebufferAttachmentsVector<VkImageView> &attachmentViews,
     const AttachmentOpsArray &ops,
     angle::VulkanPerfCounters *countersOut)
@@ -3196,6 +3139,93 @@ bool operator==(const RenderPassDesc &lhs, const RenderPassDesc &rhs)
     return memcmp(&lhs, &rhs, sizeof(RenderPassDesc)) == 0;
 }
 
+// Compute Pipeline Description implementation.
+// Use aligned allocation and free so we can use the alignas keyword.
+void *ComputePipelineDesc::operator new(std::size_t size)
+{
+    return angle::AlignedAlloc(size, 32);
+}
+
+void ComputePipelineDesc::operator delete(void *ptr)
+{
+    return angle::AlignedFree(ptr);
+}
+
+ComputePipelineDesc::ComputePipelineDesc()
+{
+    ASSERT(mPipelineOptions.permutationIndex == 0);
+    ASSERT(std::all_of(mPadding, mPadding + sizeof(mPadding), [](char c) { return c == 0; }));
+}
+
+ComputePipelineDesc::ComputePipelineDesc(const ComputePipelineDesc &other)
+    : mConstantIds{other.getConstantIds()},
+      mConstants{other.getConstants()},
+      mPipelineOptions{other.getPipelineOptions()}
+{}
+
+ComputePipelineDesc &ComputePipelineDesc::operator=(const ComputePipelineDesc &other)
+{
+    mPipelineOptions = other.getPipelineOptions();
+    mConstantIds     = other.getConstantIds();
+    mConstants       = other.getConstants();
+    return *this;
+}
+
+ComputePipelineDesc::ComputePipelineDesc(VkSpecializationInfo *specializationInfo,
+                                         ComputePipelineOptions pipelineOptions)
+    : mConstantIds{}, mConstants{}, mPipelineOptions{pipelineOptions}
+{
+    if (specializationInfo != nullptr && specializationInfo->pMapEntries &&
+        specializationInfo->mapEntryCount != 0)
+    {
+        const VkSpecializationMapEntry *mapEntries = specializationInfo->pMapEntries;
+        mConstantIds.resize(specializationInfo->mapEntryCount);
+        for (size_t mapEntryCount = 0; mapEntryCount < mConstantIds.size(); mapEntryCount++)
+            mConstantIds[mapEntryCount] = mapEntries[mapEntryCount].constantID;
+    }
+    if (specializationInfo != nullptr && specializationInfo->pData &&
+        specializationInfo->dataSize != 0)
+    {
+        const uint32_t *constDataEntries = (const uint32_t *)specializationInfo->pData;
+        mConstants.resize(specializationInfo->dataSize / sizeof(uint32_t));
+        for (size_t constantEntryCount = 0; constantEntryCount < mConstants.size();
+             constantEntryCount++)
+            mConstants[constantEntryCount] = constDataEntries[constantEntryCount];
+    }
+}
+
+size_t ComputePipelineDesc::hash() const
+{
+    // Union is static-asserted, just another sanity check here
+    ASSERT(sizeof(ComputePipelineOptions) == 1);
+
+    size_t paddedPipelineOptions = mPipelineOptions.permutationIndex;
+    size_t pipelineOptionsHash =
+        angle::ComputeGenericHash(&paddedPipelineOptions, sizeof(paddedPipelineOptions));
+
+    size_t specializationConstantIDsHash = 0;
+    if (!mConstantIds.empty())
+    {
+        specializationConstantIDsHash =
+            angle::ComputeGenericHash(mConstantIds.data(), mConstantIds.size() * sizeof(uint32_t));
+    }
+
+    size_t specializationConstantsHash = 0;
+    if (!mConstants.empty())
+    {
+        specializationConstantsHash =
+            angle::ComputeGenericHash(mConstants.data(), mConstants.size() * sizeof(uint32_t));
+    }
+
+    return pipelineOptionsHash ^ specializationConstantIDsHash ^ specializationConstantsHash;
+}
+
+bool ComputePipelineDesc::keyEqual(const ComputePipelineDesc &other) const
+{
+    return mPipelineOptions.permutationIndex == other.getPipelineOptions().permutationIndex &&
+           mConstantIds == other.getConstantIds() && mConstants == other.getConstants();
+}
+
 // GraphicsPipelineDesc implementation.
 // Use aligned allocation and free so we can use the alignas keyword.
 void *GraphicsPipelineDesc::operator new(std::size_t size)
@@ -3270,17 +3300,9 @@ const void *GraphicsPipelineDesc::getPipelineSubsetMemory(GraphicsPipelineSubset
 
     switch (subset)
     {
-        case GraphicsPipelineSubset::VertexInput:
-            *sizeOut = kPipelineVertexInputDescSize - vertexInputReduceSize;
-            return &mVertexInput;
-
         case GraphicsPipelineSubset::Shaders:
             *sizeOut = kPipelineShadersDescSize;
             return &mShaders;
-
-        case GraphicsPipelineSubset::FragmentOutput:
-            *sizeOut = kPipelineFragmentOutputDescSize;
-            return &mSharedNonVertexInput;
 
         case GraphicsPipelineSubset::Complete:
         default:
@@ -3320,7 +3342,7 @@ bool GraphicsPipelineDesc::keyEqual(const GraphicsPipelineDesc &other,
 // effect, or the context is robust.  For VK_EXT_graphics_pipeline_library, such state that affects
 // multiple subsets of the pipeline is duplicated in each subset (for example, there are two
 // copies of isRobustContext, one for vertex input and one for shader stages).
-void GraphicsPipelineDesc::initDefaults(const Context *context,
+void GraphicsPipelineDesc::initDefaults(const ErrorContext *context,
                                         GraphicsPipelineSubset subset,
                                         PipelineRobustness pipelineRobustness,
                                         PipelineProtectedAccess pipelineProtectedAccess)
@@ -3428,13 +3450,12 @@ void GraphicsPipelineDesc::initDefaults(const Context *context,
             pipelineProtectedAccess == PipelineProtectedAccess::Protected;
 }
 
-VkResult GraphicsPipelineDesc::initializePipeline(Context *context,
+VkResult GraphicsPipelineDesc::initializePipeline(ErrorContext *context,
                                                   PipelineCacheAccess *pipelineCache,
                                                   GraphicsPipelineSubset subset,
                                                   const RenderPass &compatibleRenderPass,
                                                   const PipelineLayout &pipelineLayout,
-                                                  const ShaderModuleMap &shaders,
-                                                  const SpecializationConstants &specConsts,
+                                                  const GraphicsPipelineShadersInfo &shaders,
                                                   Pipeline *pipelineOut,
                                                   CacheLookUpFeedback *feedbackOut) const
 {
@@ -3466,17 +3487,35 @@ VkResult GraphicsPipelineDesc::initializePipeline(Context *context,
         createInfo.pInputAssemblyState = &vertexInputState.inputAssemblyState;
     }
 
+    VkPipeline shadersPipeline                        = VK_NULL_HANDLE;
+    VkPipelineLibraryCreateInfoKHR shadersLibraryInfo = {};
+    shadersLibraryInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR;
+
     if (hasShaders)
     {
-        initializePipelineShadersState(context, shaders, specConsts, &shadersState,
-                                       &dynamicStateList);
+        // If the shaders state comes from a library, use the library instead.
+        if (shaders.usePipelineLibrary())
+        {
+            shadersPipeline = shaders.mPipelineLibrary->getPipeline().getHandle();
 
-        createInfo.stageCount          = static_cast<uint32_t>(shadersState.shaderStages.size());
-        createInfo.pStages             = shadersState.shaderStages.data();
-        createInfo.pTessellationState  = &shadersState.tessellationState;
-        createInfo.pViewportState      = &shadersState.viewportState;
-        createInfo.pRasterizationState = &shadersState.rasterState;
-        createInfo.pDepthStencilState  = &shadersState.depthStencilState;
+            shadersLibraryInfo.libraryCount = 1;
+            shadersLibraryInfo.pLibraries   = &shadersPipeline;
+
+            AddToPNextChain(&createInfo, &shadersLibraryInfo);
+        }
+        else
+        {
+            initializePipelineShadersState(context, *shaders.mShaders, *shaders.mSpecConsts,
+                                           &shadersState, &dynamicStateList);
+
+            createInfo.stageCount         = static_cast<uint32_t>(shadersState.shaderStages.size());
+            createInfo.pStages            = shadersState.shaderStages.data();
+            createInfo.pTessellationState = &shadersState.tessellationState;
+            createInfo.pViewportState     = &shadersState.viewportState;
+            createInfo.pRasterizationState = &shadersState.rasterState;
+            createInfo.pDepthStencilState  = &shadersState.depthStencilState;
+        }
+
         createInfo.layout              = pipelineLayout.getHandle();
     }
 
@@ -3505,26 +3544,19 @@ VkResult GraphicsPipelineDesc::initializePipeline(Context *context,
     VkGraphicsPipelineLibraryCreateInfoEXT libraryInfo = {};
     libraryInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT;
 
-    if (subset != GraphicsPipelineSubset::Complete)
+    if (subset == GraphicsPipelineSubset::Shaders)
     {
-        switch (subset)
-        {
-            case GraphicsPipelineSubset::VertexInput:
-                libraryInfo.flags = VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT;
-                break;
-            case GraphicsPipelineSubset::Shaders:
-                libraryInfo.flags = VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT |
-                                    VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT;
-                break;
-            case GraphicsPipelineSubset::FragmentOutput:
-                libraryInfo.flags = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT;
-                break;
-            default:
-                UNREACHABLE();
-                break;
-        }
+        libraryInfo.flags = VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT |
+                            VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT;
 
         createInfo.flags |= VK_PIPELINE_CREATE_LIBRARY_BIT_KHR;
+
+        AddToPNextChain(&createInfo, &libraryInfo);
+    }
+    else if (hasShaders && shaders.usePipelineLibrary())
+    {
+        libraryInfo.flags = VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT |
+                            VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT;
 
         AddToPNextChain(&createInfo, &libraryInfo);
     }
@@ -3593,6 +3625,9 @@ VkResult GraphicsPipelineDesc::initializePipeline(Context *context,
                             DynamicRenderingInfoSubset::Pipeline, {}, VK_SUBPASS_CONTENTS_INLINE,
                             {}, {}, {}, 0, &renderingInfo);
         AttachPipelineRenderingInfo(context, getRenderPassDesc(), renderingInfo, subset,
+                                    shaders.usePipelineLibrary()
+                                        ? ShadersStateSource::PipelineLibrary
+                                        : ShadersStateSource::ThisPipeline,
                                     &pipelineRenderingInfo, &attachmentLocations, &inputLocations,
                                     &createFlags2, &createInfo);
     }
@@ -3673,7 +3708,7 @@ angle::FormatID patchVertexAttribComponentType(angle::FormatID format,
 }
 
 VkFormat GraphicsPipelineDesc::getPipelineVertexInputStateFormat(
-    Context *context,
+    ErrorContext *context,
     angle::FormatID formatID,
     bool compressed,
     const gl::ComponentType programAttribType,
@@ -3723,7 +3758,7 @@ VkFormat GraphicsPipelineDesc::getPipelineVertexInputStateFormat(
 }
 
 void GraphicsPipelineDesc::initializePipelineVertexInputState(
-    Context *context,
+    ErrorContext *context,
     GraphicsPipelineVertexInputVulkanStructs *stateOut,
     GraphicsPipelineDynamicStateList *dynamicStateListOut) const
 {
@@ -3818,7 +3853,7 @@ void GraphicsPipelineDesc::initializePipelineVertexInputState(
 }
 
 void GraphicsPipelineDesc::initializePipelineShadersState(
-    Context *context,
+    ErrorContext *context,
     const ShaderModuleMap &shaders,
     const SpecializationConstants &specConsts,
     GraphicsPipelineShadersVulkanStructs *stateOut,
@@ -4055,7 +4090,7 @@ void GraphicsPipelineDesc::initializePipelineShadersState(
 }
 
 void GraphicsPipelineDesc::initializePipelineSharedNonVertexInputState(
-    Context *context,
+    ErrorContext *context,
     GraphicsPipelineSharedNonVertexInputVulkanStructs *stateOut,
     GraphicsPipelineDynamicStateList *dynamicStateListOut) const
 {
@@ -4081,7 +4116,7 @@ void GraphicsPipelineDesc::initializePipelineSharedNonVertexInputState(
 }
 
 void GraphicsPipelineDesc::initializePipelineFragmentOutputState(
-    Context *context,
+    ErrorContext *context,
     GraphicsPipelineFragmentOutputVulkanStructs *stateOut,
     GraphicsPipelineDynamicStateList *dynamicStateListOut) const
 {
@@ -5054,7 +5089,7 @@ CreateMonolithicPipelineTask::CreateMonolithicPipelineTask(
     const ShaderModuleMap &shaders,
     const SpecializationConstants &specConsts,
     const GraphicsPipelineDesc &desc)
-    : Context(renderer),
+    : ErrorContext(renderer),
       mPipelineCache(pipelineCache),
       mCompatibleRenderPass(nullptr),
       mPipelineLayout(pipelineLayout),
@@ -5078,8 +5113,8 @@ void CreateMonolithicPipelineTask::operator()()
 
     ANGLE_TRACE_EVENT0("gpu.angle", "CreateMonolithicPipelineTask");
     mResult = mDesc.initializePipeline(this, &mPipelineCache, vk::GraphicsPipelineSubset::Complete,
-                                       *compatibleRenderPass, mPipelineLayout, mShaders,
-                                       mSpecConsts, &mPipeline, &mFeedback);
+                                       *compatibleRenderPass, mPipelineLayout,
+                                       {&mShaders, &mSpecConsts}, &mPipeline, &mFeedback);
 
     if (mRenderer->getFeatures().slowDownMonolithicPipelineCreationForTesting.enabled)
     {
@@ -5109,7 +5144,10 @@ WaitableMonolithicPipelineCreationTask::~WaitableMonolithicPipelineCreationTask(
 }
 
 // PipelineHelper implementation.
-PipelineHelper::PipelineHelper() = default;
+PipelineHelper::PipelineHelper()
+{
+    mTransitions.reserve(8);
+}
 
 PipelineHelper::~PipelineHelper() = default;
 
@@ -5132,7 +5170,7 @@ void PipelineHelper::destroy(VkDevice device)
     reset();
 }
 
-void PipelineHelper::release(Context *context)
+void PipelineHelper::release(ErrorContext *context)
 {
     Renderer *renderer = context->getRenderer();
 
@@ -5243,7 +5281,8 @@ FramebufferHelper &FramebufferHelper::operator=(FramebufferHelper &&other)
     return *this;
 }
 
-angle::Result FramebufferHelper::init(Context *context, const VkFramebufferCreateInfo &createInfo)
+angle::Result FramebufferHelper::init(ErrorContext *context,
+                                      const VkFramebufferCreateInfo &createInfo)
 {
     ANGLE_VK_TRY(context, mFramebuffer.init(context->getDevice(), createInfo));
     return angle::Result::Continue;
@@ -5413,6 +5452,13 @@ void FramebufferDesc::releaseCachedObject(ContextVk *contextVk)
     SetBitField(mIsValid, 0);
 }
 
+bool FramebufferDesc::hasValidCachedObject(ContextVk *contextVk) const
+{
+    ASSERT(valid());
+    Framebuffer framebuffer;
+    return contextVk->getShareGroup()->getFramebufferCache().get(contextVk, *this, framebuffer);
+}
+
 // YcbcrConversionDesc implementation
 YcbcrConversionDesc::YcbcrConversionDesc()
 {
@@ -5520,7 +5566,7 @@ void YcbcrConversionDesc::updateConversionModel(VkSamplerYcbcrModelConversion co
     SetBitField(mConversionModel, conversionModel);
 }
 
-angle::Result YcbcrConversionDesc::init(Context *context,
+angle::Result YcbcrConversionDesc::init(ErrorContext *context,
                                         SamplerYcbcrConversion *conversionOut) const
 {
     // Create the VkSamplerYcbcrConversion
@@ -5567,7 +5613,7 @@ SamplerDesc::SamplerDesc(const SamplerDesc &other) = default;
 
 SamplerDesc &SamplerDesc::operator=(const SamplerDesc &rhs) = default;
 
-SamplerDesc::SamplerDesc(Context *context,
+SamplerDesc::SamplerDesc(ErrorContext *context,
                          const gl::SamplerState &samplerState,
                          bool stencilMode,
                          const YcbcrConversionDesc *ycbcrConversionDesc,
@@ -5810,7 +5856,7 @@ SamplerHelper &SamplerHelper::operator=(SamplerHelper &&rhs)
     return *this;
 }
 
-angle::Result SamplerHelper::init(Context *context, const VkSamplerCreateInfo &createInfo)
+angle::Result SamplerHelper::init(ErrorContext *context, const VkSamplerCreateInfo &createInfo)
 {
     mSamplerSerial = context->getRenderer()->getResourceSerialFactory().generateSamplerSerial();
     ANGLE_VK_TRY(context, mSampler.init(context->getDevice(), createInfo));
@@ -6190,10 +6236,7 @@ void DescriptorSetDesc::updateDescriptorSet(Renderer *renderer,
                         mDescriptorInfos[infoDescIndex + arrayElement];
                     VkDescriptorImageInfo &imageInfo = writeImages[arrayElement];
 
-                    ImageLayout imageLayout = static_cast<ImageLayout>(infoDesc.imageLayoutOrRange);
-
-                    imageInfo.imageLayout =
-                        ConvertImageLayoutToVkImageLayout(renderer, imageLayout);
+                    imageInfo.imageLayout = static_cast<VkImageLayout>(infoDesc.imageLayoutOrRange);
                     imageInfo.imageView = handles[infoDescIndex + arrayElement].imageView;
                     imageInfo.sampler   = handles[infoDescIndex + arrayElement].sampler;
                 }
@@ -6233,6 +6276,12 @@ void DescriptorSetDescAndPool::releaseCachedObject(Renderer *renderer)
     ASSERT(valid());
     mPool->releaseCachedDescriptorSet(renderer, mDesc);
     mPool = nullptr;
+}
+
+bool DescriptorSetDescAndPool::hasValidCachedObject(ContextVk *contextVk) const
+{
+    ASSERT(valid());
+    return mPool->hasCachedDescriptorSet(mDesc);
 }
 
 // DescriptorSetDescBuilder implementation.
@@ -6292,7 +6341,7 @@ void DescriptorSetDescBuilder::updateTransformFeedbackBuffer(
 
     uint32_t infoIndex = writeDescriptorDescs[baseBinding].descriptorInfoIndex + xfbBufferIndex;
     DescriptorInfoDesc &infoDesc   = mDesc.getInfoDesc(infoIndex);
-    infoDesc.samplerOrBufferSerial = bufferHelper.getBlockSerial().getValue();
+    infoDesc.samplerOrBufferSerial = bufferHelper.getBufferSerial().getValue();
     SetBitField(infoDesc.imageViewSerialOrOffset, alignedOffset);
     SetBitField(infoDesc.imageLayoutOrRange, adjustedRange);
     infoDesc.imageSubresourceRange = 0;
@@ -6409,7 +6458,7 @@ void DescriptorSetDescBuilder::updatePreCacheActiveTextures(
                     textureVk->getImageViewSubresourceSerial(
                         samplerState, samplerUniform.isTexelFetchStaticUse());
 
-                ImageLayout imageLayout = textureVk->getImage().getCurrentImageLayout();
+                VkImageLayout imageLayout = textureVk->getImage().getCurrentLayout();
                 SetBitField(infoDesc.imageLayoutOrRange, imageLayout);
                 infoDesc.imageViewSerialOrOffset = imageViewSerial.viewSerial.getValue();
                 infoDesc.samplerOrBufferSerial   = samplerHelper.getSamplerSerial().getValue();
@@ -6439,6 +6488,7 @@ void DescriptorSetDescBuilder::setEmptyBuffer(uint32_t infoDescIndex,
 
 template <typename CommandBufferT>
 void DescriptorSetDescBuilder::updateOneShaderBuffer(
+    Context *context,
     CommandBufferT *commandBufferHelper,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
@@ -6486,7 +6536,7 @@ void DescriptorSetDescBuilder::updateOneShaderBuffer(
                                  descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     if (isUniformBuffer)
     {
-        commandBufferHelper->bufferRead(VK_ACCESS_UNIFORM_READ_BIT, block.activeShaders(),
+        commandBufferHelper->bufferRead(context, VK_ACCESS_UNIFORM_READ_BIT, block.activeShaders(),
                                         &bufferHelper);
     }
     else
@@ -6499,8 +6549,8 @@ void DescriptorSetDescBuilder::updateOneShaderBuffer(
             // marked read-only.  This also helps BufferVk make better decisions during
             // buffer data uploads and copies by knowing that the buffers are not actually
             // being written to.
-            commandBufferHelper->bufferRead(VK_ACCESS_SHADER_READ_BIT, block.activeShaders(),
-                                            &bufferHelper);
+            commandBufferHelper->bufferRead(context, VK_ACCESS_SHADER_READ_BIT,
+                                            block.activeShaders(), &bufferHelper);
         }
         else if ((bufferHelper.getCurrentWriteAccess() & VK_ACCESS_SHADER_WRITE_BIT) != 0 &&
                  (memoryBarrierBits & kBufferMemoryBarrierBits) == 0)
@@ -6520,11 +6570,8 @@ void DescriptorSetDescBuilder::updateOneShaderBuffer(
         {
             // We set the SHADER_READ_BIT to be conservative.
             VkAccessFlags accessFlags = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-            for (const gl::ShaderType shaderType : block.activeShaders())
-            {
-                const vk::PipelineStage pipelineStage = vk::GetPipelineStage(shaderType);
-                commandBufferHelper->bufferWrite(accessFlags, pipelineStage, &bufferHelper);
-            }
+            commandBufferHelper->bufferWrite(context, accessFlags, block.activeShaders(),
+                                             &bufferHelper);
         }
     }
 
@@ -6549,6 +6596,7 @@ void DescriptorSetDescBuilder::updateOneShaderBuffer(
 
 template <typename CommandBufferT>
 void DescriptorSetDescBuilder::updateShaderBuffers(
+    Context *context,
     CommandBufferT *commandBufferHelper,
     const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
@@ -6569,14 +6617,15 @@ void DescriptorSetDescBuilder::updateShaderBuffers(
         const GLuint binding = isUniformBuffer
                                    ? executable.getUniformBlockBinding(blockIndex)
                                    : executable.getShaderStorageBlockBinding(blockIndex);
-        updateOneShaderBuffer(commandBufferHelper, variableInfoMap, buffers, blocks[blockIndex],
-                              binding, descriptorType, maxBoundBufferRange, emptyBuffer,
-                              writeDescriptorDescs, memoryBarrierBits);
+        updateOneShaderBuffer(context, commandBufferHelper, variableInfoMap, buffers,
+                              blocks[blockIndex], binding, descriptorType, maxBoundBufferRange,
+                              emptyBuffer, writeDescriptorDescs, memoryBarrierBits);
     }
 }
 
 template <typename CommandBufferT>
 void DescriptorSetDescBuilder::updateAtomicCounters(
+    Context *context,
     CommandBufferT *commandBufferHelper,
     const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
@@ -6624,12 +6673,9 @@ void DescriptorSetDescBuilder::updateAtomicCounters(
         BufferVk *bufferVk             = vk::GetImpl(bufferBinding.get());
         vk::BufferHelper &bufferHelper = bufferVk->getBuffer();
 
-        for (const gl::ShaderType shaderType : atomicCounterBuffer.activeShaders())
-        {
-            const vk::PipelineStage pipelineStage = vk::GetPipelineStage(shaderType);
-            commandBufferHelper->bufferWrite(VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-                                             pipelineStage, &bufferHelper);
-        }
+        VkAccessFlags accessFlags = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        commandBufferHelper->bufferWrite(context, accessFlags, atomicCounterBuffer.activeShaders(),
+                                         &bufferHelper);
 
         VkDeviceSize offset = bufferBinding.getOffset() + bufferHelper.getOffset();
 
@@ -6652,6 +6698,7 @@ void DescriptorSetDescBuilder::updateAtomicCounters(
 
 // Explicit instantiation
 template void DescriptorSetDescBuilder::updateOneShaderBuffer<vk::RenderPassCommandBufferHelper>(
+    Context *context,
     RenderPassCommandBufferHelper *commandBufferHelper,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
@@ -6664,6 +6711,7 @@ template void DescriptorSetDescBuilder::updateOneShaderBuffer<vk::RenderPassComm
     const GLbitfield memoryBarrierBits);
 
 template void DescriptorSetDescBuilder::updateOneShaderBuffer<OutsideRenderPassCommandBufferHelper>(
+    Context *context,
     OutsideRenderPassCommandBufferHelper *commandBufferHelper,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
     const gl::BufferVector &buffers,
@@ -6676,6 +6724,7 @@ template void DescriptorSetDescBuilder::updateOneShaderBuffer<OutsideRenderPassC
     const GLbitfield memoryBarrierBits);
 
 template void DescriptorSetDescBuilder::updateShaderBuffers<OutsideRenderPassCommandBufferHelper>(
+    Context *context,
     OutsideRenderPassCommandBufferHelper *commandBufferHelper,
     const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
@@ -6688,6 +6737,7 @@ template void DescriptorSetDescBuilder::updateShaderBuffers<OutsideRenderPassCom
     const GLbitfield memoryBarrierBits);
 
 template void DescriptorSetDescBuilder::updateShaderBuffers<RenderPassCommandBufferHelper>(
+    Context *context,
     RenderPassCommandBufferHelper *commandBufferHelper,
     const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
@@ -6700,6 +6750,7 @@ template void DescriptorSetDescBuilder::updateShaderBuffers<RenderPassCommandBuf
     const GLbitfield memoryBarrierBits);
 
 template void DescriptorSetDescBuilder::updateAtomicCounters<OutsideRenderPassCommandBufferHelper>(
+    Context *context,
     OutsideRenderPassCommandBufferHelper *commandBufferHelper,
     const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
@@ -6710,6 +6761,7 @@ template void DescriptorSetDescBuilder::updateAtomicCounters<OutsideRenderPassCo
     const WriteDescriptorDescs &writeDescriptorDescs);
 
 template void DescriptorSetDescBuilder::updateAtomicCounters<RenderPassCommandBufferHelper>(
+    Context *context,
     RenderPassCommandBufferHelper *commandBufferHelper,
     const gl::ProgramExecutable &executable,
     const ShaderInterfaceVariableInfoMap &variableInfoMap,
@@ -6807,7 +6859,7 @@ angle::Result DescriptorSetDescBuilder::updateImages(
                 // Note: binding.access is unused because it is implied by the shader.
 
                 DescriptorInfoDesc &infoDesc = mDesc.getInfoDesc(infoIndex);
-                SetBitField(infoDesc.imageLayoutOrRange, image->getCurrentImageLayout());
+                SetBitField(infoDesc.imageLayoutOrRange, image->getCurrentLayout());
                 memcpy(&infoDesc.imageSubresourceRange, &serial.subresource, sizeof(uint32_t));
                 infoDesc.imageViewSerialOrOffset = serial.viewSerial.getValue();
                 infoDesc.samplerOrBufferSerial   = 0;
@@ -6854,8 +6906,9 @@ angle::Result DescriptorSetDescBuilder::updateInputAttachments(
                         .getVariableById(gl::ShaderType::Fragment,
                                          sh::vk::spirv::kIdDepthInputAttachment)
                         .binding;
-                updateInputAttachment(context, depthBinding, ImageLayout::DepthStencilWriteAndInput,
-                                      imageView, serial, writeDescriptorDescs);
+                updateInputAttachment(context, depthBinding,
+                                      VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR, imageView, serial,
+                                      writeDescriptorDescs);
             }
 
             if (executable.usesStencilFramebufferFetch() &&
@@ -6871,7 +6924,7 @@ angle::Result DescriptorSetDescBuilder::updateInputAttachments(
                                          sh::vk::spirv::kIdStencilInputAttachment)
                         .binding;
                 updateInputAttachment(context, stencilBinding,
-                                      ImageLayout::DepthStencilWriteAndInput, imageView, serial,
+                                      VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR, imageView, serial,
                                       writeDescriptorDescs);
             }
         }
@@ -6904,8 +6957,8 @@ angle::Result DescriptorSetDescBuilder::updateInputAttachments(
         // rendering, there's a specific layout.
         updateInputAttachment(context, binding,
                               context->getFeatures().preferDynamicRendering.enabled
-                                  ? ImageLayout::ColorWriteAndInput
-                                  : ImageLayout::FragmentShaderWrite,
+                                  ? VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR
+                                  : VK_IMAGE_LAYOUT_GENERAL,
                               imageView, serial, writeDescriptorDescs);
     }
 
@@ -6915,7 +6968,7 @@ angle::Result DescriptorSetDescBuilder::updateInputAttachments(
 void DescriptorSetDescBuilder::updateInputAttachment(
     Context *context,
     uint32_t binding,
-    ImageLayout layout,
+    VkImageLayout layout,
     const vk::ImageView *imageView,
     ImageOrBufferViewSubresourceSerial serial,
     const WriteDescriptorDescs &writeDescriptorDescs)
@@ -6961,7 +7014,7 @@ size_t SharedCacheKeyManager<SharedCacheKeyT>::updateEmptySlotBits()
 }
 
 template <class SharedCacheKeyT>
-void SharedCacheKeyManager<SharedCacheKeyT>::addKey(const SharedCacheKeyT &key)
+void SharedCacheKeyManager<SharedCacheKeyT>::addKeyImpl(const SharedCacheKeyT &key)
 {
     // Search for available slots and use that if any
     size_t slot = 0;
@@ -7073,11 +7126,12 @@ void SharedCacheKeyManager<SharedCacheKeyT>::clear()
 }
 
 template <class SharedCacheKeyT>
-bool SharedCacheKeyManager<SharedCacheKeyT>::containsKey(const SharedCacheKeyT &key) const
+bool SharedCacheKeyManager<SharedCacheKeyT>::containsKeyWithOwnerEqual(
+    const SharedCacheKeyT &key) const
 {
     for (const SharedCacheKeyT &sharedCacheKey : mSharedCacheKeys)
     {
-        if (*key == *sharedCacheKey)
+        if (key.owner_equal(sharedCacheKey))
         {
             return true;
         }
@@ -7086,19 +7140,65 @@ bool SharedCacheKeyManager<SharedCacheKeyT>::containsKey(const SharedCacheKeyT &
 }
 
 template <class SharedCacheKeyT>
-void SharedCacheKeyManager<SharedCacheKeyT>::assertAllEntriesDestroyed()
+void SharedCacheKeyManager<SharedCacheKeyT>::assertAllEntriesDestroyed() const
 {
     // Caller must have already freed all caches
-    for (SharedCacheKeyT &sharedCacheKey : mSharedCacheKeys)
+    for (const SharedCacheKeyT &sharedCacheKey : mSharedCacheKeys)
     {
         ASSERT(!sharedCacheKey->valid());
     }
 }
 
+template <class SharedCacheKeyT>
+bool SharedCacheKeyManager<SharedCacheKeyT>::allValidEntriesAreCached(ContextVk *contextVk) const
+{
+    for (const SharedCacheKeyT &sharedCacheKey : mSharedCacheKeys)
+    {
+        if (sharedCacheKey->valid() && !sharedCacheKey->hasValidCachedObject(contextVk))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Explict instantiate for FramebufferCacheManager
 template class SharedCacheKeyManager<SharedFramebufferCacheKey>;
+template <>
+void SharedCacheKeyManager<SharedFramebufferCacheKey>::addKey(const SharedFramebufferCacheKey &key)
+{
+    addKeyImpl(key);
+}
+
 // Explict instantiate for DescriptorSetCacheManager
 template class SharedCacheKeyManager<SharedDescriptorSetCacheKey>;
+template <>
+void SharedCacheKeyManager<SharedDescriptorSetCacheKey>::addKey(
+    const SharedDescriptorSetCacheKey &key)
+{
+    // There are cases that same texture or buffer are bound in multiple binding point. When we have
+    // a cache miss, we end up looping binding point and calling addKey which may end up adding same
+    // key multiple times. This is a quick way to avoid that.
+    if (mLastAddedSharedCacheKey.owner_equal(key))
+    {
+        return;
+    }
+
+    // In case of the texture or buffer is part of many descriptorSets, lets not track it any more
+    // to alleviate the overhead associated with this. We will rely on eviction to free the
+    // descriptorSets when needed.
+    static constexpr size_t kMaxEmptySlots            = 4;
+    static constexpr size_t kMaxSharedCacheKeyTracked = kSlotBitCount * kMaxEmptySlots;
+    if (mSharedCacheKeys.size() >= kMaxSharedCacheKeyTracked)
+    {
+        return;
+    }
+
+    mLastAddedSharedCacheKey = key;
+    ASSERT(!containsKeyWithOwnerEqual(key));
+
+    addKeyImpl(key);
+}
 
 // PipelineCacheAccess implementation.
 std::unique_lock<angle::SimpleMutex> PipelineCacheAccess::getLock()
@@ -7111,7 +7211,7 @@ std::unique_lock<angle::SimpleMutex> PipelineCacheAccess::getLock()
     return std::unique_lock<angle::SimpleMutex>(*mMutex);
 }
 
-VkResult PipelineCacheAccess::createGraphicsPipeline(vk::Context *context,
+VkResult PipelineCacheAccess::createGraphicsPipeline(vk::ErrorContext *context,
                                                      const VkGraphicsPipelineCreateInfo &createInfo,
                                                      vk::Pipeline *pipelineOut)
 {
@@ -7120,7 +7220,7 @@ VkResult PipelineCacheAccess::createGraphicsPipeline(vk::Context *context,
     return pipelineOut->initGraphics(context->getDevice(), createInfo, *mPipelineCache);
 }
 
-VkResult PipelineCacheAccess::createComputePipeline(vk::Context *context,
+VkResult PipelineCacheAccess::createComputePipeline(vk::ErrorContext *context,
                                                     const VkComputePipelineCreateInfo &createInfo,
                                                     vk::Pipeline *pipelineOut)
 {
@@ -7129,7 +7229,9 @@ VkResult PipelineCacheAccess::createComputePipeline(vk::Context *context,
     return pipelineOut->initCompute(context->getDevice(), createInfo, *mPipelineCache);
 }
 
-VkResult PipelineCacheAccess::getCacheData(vk::Context *context, size_t *cacheSize, void *cacheData)
+VkResult PipelineCacheAccess::getCacheData(vk::ErrorContext *context,
+                                           size_t *cacheSize,
+                                           void *cacheData)
 {
     std::unique_lock<angle::SimpleMutex> lock = getLock();
     return mPipelineCache->getCacheData(context->getDevice(), cacheSize, cacheData);
@@ -7149,81 +7251,60 @@ void PipelineCacheAccess::merge(Renderer *renderer, const vk::PipelineCache &pip
 UpdateDescriptorSetsBuilder::UpdateDescriptorSetsBuilder()
 {
     // Reserve reasonable amount of spaces so that for majority of apps we don't need to grow at all
-    constexpr size_t kDescriptorBufferInfosInitialSize = 8;
-    constexpr size_t kDescriptorImageInfosInitialSize  = 4;
+    constexpr size_t kDescriptorBufferInfosInitialSize = 16;
+    constexpr size_t kDescriptorImageInfosInitialSize  = 16;
+    constexpr size_t kDescriptorBufferViewsInitialSize = 1;
     constexpr size_t kDescriptorWriteInfosInitialSize =
         kDescriptorBufferInfosInitialSize + kDescriptorImageInfosInitialSize;
-    constexpr size_t kDescriptorBufferViewsInitialSize = 0;
 
-    mDescriptorBufferInfos.reserve(kDescriptorBufferInfosInitialSize);
-    mDescriptorImageInfos.reserve(kDescriptorImageInfosInitialSize);
-    mWriteDescriptorSets.reserve(kDescriptorWriteInfosInitialSize);
-    mBufferViews.reserve(kDescriptorBufferViewsInitialSize);
+    mDescriptorBufferInfos.init(kDescriptorBufferInfosInitialSize);
+    mDescriptorImageInfos.init(kDescriptorImageInfosInitialSize);
+    mBufferViews.init(kDescriptorBufferViewsInitialSize);
+    mWriteDescriptorSets.init(kDescriptorWriteInfosInitialSize);
 }
 
 UpdateDescriptorSetsBuilder::~UpdateDescriptorSetsBuilder() = default;
 
-template <typename T, const T *VkWriteDescriptorSet::*pInfo>
-void UpdateDescriptorSetsBuilder::growDescriptorCapacity(std::vector<T> *descriptorVector,
-                                                         size_t newSize)
+template <typename T>
+T *UpdateDescriptorSetsBuilder::DescriptorInfoAllocator<T>::allocate(uint32_t count)
 {
-    const T *const oldInfoStart = descriptorVector->empty() ? nullptr : &(*descriptorVector)[0];
-    size_t newCapacity          = std::max(descriptorVector->capacity() << 1, newSize);
-    descriptorVector->reserve(newCapacity);
-
-    if (oldInfoStart)
+    size_t oldSize = mCurrentVector->size();
+    size_t newSize = oldSize + count;
+    if (newSize <= mCurrentVector->capacity())
     {
-        // patch mWriteInfo with new BufferInfo/ImageInfo pointers
-        for (VkWriteDescriptorSet &set : mWriteDescriptorSets)
+        (*mCurrentVector).resize(newSize);
+        mTotalSize += count;
+        return &(*mCurrentVector)[oldSize];
+    }
+
+    ++mCurrentVector;
+    // clear() always ensures we have a single element left.
+    ASSERT(mCurrentVector == mDescriptorInfos.end());
+
+    // We have reached capacity, grow the storage
+    mVectorCapacity = std::max(count, mVectorCapacity);
+    mDescriptorInfos.emplace_back();
+    mDescriptorInfos.back().reserve(mVectorCapacity);
+    mCurrentVector = mDescriptorInfos.end() - 1;
+
+    mCurrentVector->resize(count);
+    mTotalSize += count;
+
+    return &mCurrentVector->front();
+}
+
+uint32_t UpdateDescriptorSetsBuilder::WriteDescriptorSetAllocator::updateDescriptorSets(
+    VkDevice device) const
+{
+    for (const std::vector<VkWriteDescriptorSet> &vector : mDescriptorInfos)
+    {
+        if (!vector.empty())
         {
-            if (set.*pInfo)
-            {
-                size_t index = set.*pInfo - oldInfoStart;
-                set.*pInfo   = &(*descriptorVector)[index];
-            }
+            vkUpdateDescriptorSets(device, static_cast<uint32_t>(vector.size()), vector.data(), 0,
+                                   nullptr);
         }
     }
-}
-
-template <typename T, const T *VkWriteDescriptorSet::*pInfo>
-T *UpdateDescriptorSetsBuilder::allocDescriptorInfos(std::vector<T> *descriptorVector, size_t count)
-{
-    size_t oldSize = descriptorVector->size();
-    size_t newSize = oldSize + count;
-    if (newSize > descriptorVector->capacity())
-    {
-        // If we have reached capacity, grow the storage and patch the descriptor set with new
-        // buffer info pointer
-        growDescriptorCapacity<T, pInfo>(descriptorVector, newSize);
-    }
-    descriptorVector->resize(newSize);
-    return &(*descriptorVector)[oldSize];
-}
-
-VkDescriptorBufferInfo *UpdateDescriptorSetsBuilder::allocDescriptorBufferInfos(size_t count)
-{
-    return allocDescriptorInfos<VkDescriptorBufferInfo, &VkWriteDescriptorSet::pBufferInfo>(
-        &mDescriptorBufferInfos, count);
-}
-
-VkDescriptorImageInfo *UpdateDescriptorSetsBuilder::allocDescriptorImageInfos(size_t count)
-{
-    return allocDescriptorInfos<VkDescriptorImageInfo, &VkWriteDescriptorSet::pImageInfo>(
-        &mDescriptorImageInfos, count);
-}
-
-VkWriteDescriptorSet *UpdateDescriptorSetsBuilder::allocWriteDescriptorSets(size_t count)
-{
-    size_t oldSize = mWriteDescriptorSets.size();
-    size_t newSize = oldSize + count;
-    mWriteDescriptorSets.resize(newSize);
-    return &mWriteDescriptorSets[oldSize];
-}
-
-VkBufferView *UpdateDescriptorSetsBuilder::allocBufferViews(size_t count)
-{
-    return allocDescriptorInfos<VkBufferView, &VkWriteDescriptorSet::pTexelBufferView>(
-        &mBufferViews, count);
+    return mTotalSize;
 }
 
 uint32_t UpdateDescriptorSetsBuilder::flushDescriptorSetUpdates(VkDevice device)
@@ -7235,17 +7316,14 @@ uint32_t UpdateDescriptorSetsBuilder::flushDescriptorSetUpdates(VkDevice device)
         return 0;
     }
 
-    vkUpdateDescriptorSets(device, static_cast<uint32_t>(mWriteDescriptorSets.size()),
-                           mWriteDescriptorSets.data(), 0, nullptr);
-
-    uint32_t retVal = static_cast<uint32_t>(mWriteDescriptorSets.size());
+    uint32_t totalSize = mWriteDescriptorSets.updateDescriptorSets(device);
 
     mWriteDescriptorSets.clear();
     mDescriptorBufferInfos.clear();
     mDescriptorImageInfos.clear();
     mBufferViews.clear();
 
-    return retVal;
+    return totalSize;
 }
 
 // FramebufferCache implementation.
@@ -7442,7 +7520,7 @@ angle::Result RenderPassCache::getRenderPassWithOpsImpl(ContextVk *contextVk,
 }
 
 // static
-angle::Result RenderPassCache::MakeRenderPass(vk::Context *context,
+angle::Result RenderPassCache::MakeRenderPass(vk::ErrorContext *context,
                                               const vk::RenderPassDesc &desc,
                                               const vk::AttachmentOpsArray &ops,
                                               vk::RenderPass *renderPass,
@@ -7519,23 +7597,52 @@ angle::Result RenderPassCache::MakeRenderPass(vk::Context *context,
         ASSERT(attachmentFormatID != angle::FormatID::NONE);
 
         bool isYUVExternalFormat = vk::IsYUVExternalFormat(attachmentFormatID);
+
+        // If nullColorAttachmentWithExternalFormatResolve is VK_TRUE, pack YUV resolve first as if
+        // it is the color attachment.
         if (isYUVExternalFormat && renderer->nullColorAttachmentWithExternalFormatResolve())
         {
             colorAttachmentRefs.push_back(kUnusedAttachment);
             // temporary workaround for ARM driver assertion. Will remove once driver fix lands
             colorAttachmentRefs.back().layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
             colorAttachmentRefs.back().aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+            VkAttachmentReference2 colorRef = {};
+            colorRef.sType                  = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
+            colorRef.attachment             = attachmentCount.get();
+            colorRef.layout                 = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            colorRef.aspectMask             = VK_IMAGE_ASPECT_COLOR_BIT;
+
+            colorResolveAttachmentRefs.push_back(colorRef);
+            vk::UnpackAttachmentDesc(renderer, &attachmentDescs[attachmentCount.get()],
+                                     attachmentFormatID, attachmentSamples, ops[attachmentCount]);
+
+#if defined(ANGLE_PLATFORM_ANDROID)
+            // For rendering to YUV, chain on the external format info to the resolve
+            // attachment
+            const vk::ExternalYuvFormatInfo &externalFormatInfo =
+                renderer->getExternalFormatTable()->getExternalFormatInfo(attachmentFormatID);
+            externalFormat.externalFormat        = externalFormatInfo.externalFormat;
+            VkAttachmentDescription2 &attachment = attachmentDescs[attachmentCount.get()];
+            attachment.pNext                     = &externalFormat;
+            ASSERT(attachment.format == VK_FORMAT_UNDEFINED);
+#endif
+            ++attachmentCount;
             continue;
         }
+
+        ASSERT(static_cast<vk::ImageLayout>(ops[attachmentCount].initialLayout) !=
+                   vk::ImageLayout::SharedPresent ||
+               static_cast<vk::ImageLayout>(ops[attachmentCount].finalLayout) ==
+                   vk::ImageLayout::SharedPresent);
 
         VkAttachmentReference2 colorRef = {};
         colorRef.sType                  = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
         colorRef.attachment             = attachmentCount.get();
-        colorRef.layout =
-            needInputAttachments
-                ? VK_IMAGE_LAYOUT_GENERAL
-                : vk::ConvertImageLayoutToVkImageLayout(
-                      renderer, static_cast<vk::ImageLayout>(ops[attachmentCount].initialLayout));
+        colorRef.layout                 = needInputAttachments
+                                              ? VK_IMAGE_LAYOUT_GENERAL
+                                              : vk::ConvertImageLayoutToVkImageLayout(static_cast<vk::ImageLayout>(
+                                    ops[attachmentCount].initialLayout));
         colorRef.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         colorAttachmentRefs.push_back(colorRef);
 
@@ -7581,7 +7688,7 @@ angle::Result RenderPassCache::MakeRenderPass(vk::Context *context,
         depthStencilAttachmentRef.sType      = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
         depthStencilAttachmentRef.attachment = attachmentCount.get();
         depthStencilAttachmentRef.layout     = ConvertImageLayoutToVkImageLayout(
-            renderer, static_cast<vk::ImageLayout>(ops[attachmentCount].initialLayout));
+            static_cast<vk::ImageLayout>(ops[attachmentCount].initialLayout));
         depthStencilAttachmentRef.aspectMask =
             VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
 
@@ -7611,7 +7718,7 @@ angle::Result RenderPassCache::MakeRenderPass(vk::Context *context,
     }
 
     // Pack color resolve attachments
-    const uint32_t nonResolveAttachmentCount = attachmentCount.get();
+    uint32_t nonResolveAttachmentCount = attachmentCount.get();
     for (uint32_t colorIndexGL = 0; colorIndexGL < desc.colorAttachmentRange(); ++colorIndexGL)
     {
         if (!desc.hasColorResolveAttachment(colorIndexGL))
@@ -7625,10 +7732,23 @@ angle::Result RenderPassCache::MakeRenderPass(vk::Context *context,
         angle::FormatID attachmentFormatID = desc[colorIndexGL];
         bool isYUVExternalFormat           = vk::IsYUVExternalFormat(attachmentFormatID);
 
+        if (isYUVExternalFormat && renderer->nullColorAttachmentWithExternalFormatResolve())
+        {
+            // attachmentCount counts the YUV resolve, so decrease nonResolveAttachmentCount here.
+            --nonResolveAttachmentCount;
+            continue;
+        }
+
+        const VkImageLayout finalLayout =
+            ConvertImageLayoutToVkImageLayout(colorResolveImageLayout[colorIndexGL]);
+        const VkImageLayout initialLayout = (finalLayout == VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR
+                                                 ? VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR
+                                                 : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
         VkAttachmentReference2 colorRef = {};
         colorRef.sType                  = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
         colorRef.attachment             = attachmentCount.get();
-        colorRef.layout                 = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colorRef.layout                 = initialLayout;
         colorRef.aspectMask             = VK_IMAGE_ASPECT_COLOR_BIT;
 
         // If color attachment is invalidated, try to remove its resolve attachment altogether.
@@ -7643,18 +7763,10 @@ angle::Result RenderPassCache::MakeRenderPass(vk::Context *context,
 
         const bool isInvalidated = isMSRTTEmulationColorInvalidated.test(colorIndexGL);
 
-        if (isYUVExternalFormat && renderer->nullColorAttachmentWithExternalFormatResolve())
-        {
-            vk::UnpackAttachmentDesc(renderer, &attachmentDescs[attachmentCount.get()],
-                                     attachmentFormatID, attachmentSamples, ops[attachmentCount]);
-        }
-        else
-        {
-            vk::UnpackColorResolveAttachmentDesc(
-                renderer, &attachmentDescs[attachmentCount.get()], attachmentFormatID,
-                {desc.hasColorUnresolveAttachment(colorIndexGL), isInvalidated, false},
-                colorResolveImageLayout[colorIndexGL]);
-        }
+        vk::UnpackColorResolveAttachmentDesc(
+            renderer, &attachmentDescs[attachmentCount.get()], attachmentFormatID,
+            {desc.hasColorUnresolveAttachment(colorIndexGL), isInvalidated, false}, initialLayout,
+            finalLayout);
 
 #if defined(ANGLE_PLATFORM_ANDROID)
         // For rendering to YUV, chain on the external format info to the resolve attachment
@@ -7907,9 +8019,157 @@ angle::Result RenderPassCache::MakeRenderPass(vk::Context *context,
     return angle::Result::Continue;
 }
 
+// ComputePipelineCache implementation
+void ComputePipelineCache::destroy(vk::ErrorContext *context)
+{
+    VkDevice device = context->getDevice();
+
+    for (auto &item : mPayload)
+    {
+        vk::PipelineHelper &pipeline = item.second;
+        ASSERT(context->getRenderer()->hasResourceUseFinished(pipeline.getResourceUse()));
+        pipeline.destroy(device);
+    }
+
+    mPayload.clear();
+}
+
+void ComputePipelineCache::release(vk::ErrorContext *context)
+{
+    for (auto &item : mPayload)
+    {
+        vk::PipelineHelper &pipeline = item.second;
+        pipeline.release(context);
+    }
+
+    mPayload.clear();
+}
+
+angle::Result ComputePipelineCache::getOrCreatePipeline(
+    vk::ErrorContext *context,
+    vk::PipelineCacheAccess *pipelineCache,
+    const vk::PipelineLayout &pipelineLayout,
+    rx::vk::ComputePipelineOptions &pipelineOptions,
+    PipelineSource source,
+    vk::PipelineHelper **pipelineOut,
+    const char *shaderName,
+    VkSpecializationInfo *specializationInfo,
+    const vk::ShaderModuleMap &shaderModuleMap)
+{
+    vk::ComputePipelineDesc desc(specializationInfo, pipelineOptions);
+
+    auto iter = mPayload.find(desc);
+    if (iter != mPayload.end())
+    {
+        mCacheStats.hit();
+        *pipelineOut = &iter->second;
+        return angle::Result::Continue;
+    }
+    return createPipeline(context, pipelineCache, pipelineLayout, pipelineOptions, source,
+                          shaderName, *shaderModuleMap[gl::ShaderType::Compute].get(),
+                          specializationInfo, desc, pipelineOut);
+}
+
+angle::Result ComputePipelineCache::createPipeline(vk::ErrorContext *context,
+                                                   vk::PipelineCacheAccess *pipelineCache,
+                                                   const vk::PipelineLayout &pipelineLayout,
+                                                   vk::ComputePipelineOptions &pipelineOptions,
+                                                   PipelineSource source,
+                                                   const char *shaderName,
+                                                   const vk::ShaderModule &shaderModule,
+                                                   VkSpecializationInfo *specializationInfo,
+                                                   const vk::ComputePipelineDesc &desc,
+                                                   vk::PipelineHelper **pipelineOut)
+{
+    VkPipelineShaderStageCreateInfo shaderStage = {};
+    VkComputePipelineCreateInfo createInfo      = {};
+
+    shaderStage.sType               = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStage.flags               = 0;
+    shaderStage.stage               = VK_SHADER_STAGE_COMPUTE_BIT;
+    shaderStage.module              = shaderModule.getHandle();
+    shaderStage.pName               = shaderName ? shaderName : "main";
+    shaderStage.pSpecializationInfo = specializationInfo;
+
+    createInfo.sType              = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    createInfo.flags              = 0;
+    createInfo.stage              = shaderStage;
+    createInfo.layout             = pipelineLayout.getHandle();
+    createInfo.basePipelineHandle = VK_NULL_HANDLE;
+    createInfo.basePipelineIndex  = 0;
+
+    VkPipelineRobustnessCreateInfoEXT robustness = {};
+    robustness.sType = VK_STRUCTURE_TYPE_PIPELINE_ROBUSTNESS_CREATE_INFO_EXT;
+
+    // Enable robustness on the pipeline if needed.  Note that the global robustBufferAccess feature
+    // must be disabled by default.
+    if (pipelineOptions.robustness != 0)
+    {
+        ASSERT(context->getFeatures().supportsPipelineRobustness.enabled);
+
+        robustness.storageBuffers = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_EXT;
+        robustness.uniformBuffers = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_EXT;
+        robustness.vertexInputs   = VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DEVICE_DEFAULT_EXT;
+        robustness.images         = VK_PIPELINE_ROBUSTNESS_IMAGE_BEHAVIOR_DEVICE_DEFAULT_EXT;
+
+        vk::AddToPNextChain(&createInfo, &robustness);
+    }
+
+    // Restrict pipeline to protected or unprotected command buffers if possible.
+    if (pipelineOptions.protectedAccess != 0)
+    {
+        ASSERT(context->getFeatures().supportsPipelineProtectedAccess.enabled);
+        createInfo.flags |= VK_PIPELINE_CREATE_PROTECTED_ACCESS_ONLY_BIT_EXT;
+    }
+    else if (context->getFeatures().supportsPipelineProtectedAccess.enabled)
+    {
+        createInfo.flags |= VK_PIPELINE_CREATE_NO_PROTECTED_ACCESS_BIT_EXT;
+    }
+
+    VkPipelineCreationFeedback feedback               = {};
+    VkPipelineCreationFeedback perStageFeedback       = {};
+    VkPipelineCreationFeedbackCreateInfo feedbackInfo = {};
+    feedbackInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO;
+    feedbackInfo.pPipelineCreationFeedback = &feedback;
+    // Note: see comment in GraphicsPipelineDesc::initializePipeline about why per-stage feedback is
+    // specified even though unused.
+    feedbackInfo.pipelineStageCreationFeedbackCount = 1;
+    feedbackInfo.pPipelineStageCreationFeedbacks    = &perStageFeedback;
+
+    const bool supportsFeedback =
+        context->getRenderer()->getFeatures().supportsPipelineCreationFeedback.enabled;
+    if (supportsFeedback)
+    {
+        vk::AddToPNextChain(&createInfo, &feedbackInfo);
+    }
+
+    vk::Pipeline pipeline;
+    ANGLE_VK_TRY(context, pipelineCache->createComputePipeline(context, createInfo, &pipeline));
+
+    vk::CacheLookUpFeedback lookUpFeedback = vk::CacheLookUpFeedback::None;
+
+    if (supportsFeedback)
+    {
+        const bool cacheHit =
+            (feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) !=
+            0;
+
+        lookUpFeedback = cacheHit ? vk::CacheLookUpFeedback::Hit : vk::CacheLookUpFeedback::Miss;
+        ApplyPipelineCreationFeedback(context, feedback);
+    }
+    vk::PipelineHelper computePipeline = vk::PipelineHelper();
+    computePipeline.setComputePipeline(std::move(pipeline), lookUpFeedback);
+
+    mCacheStats.missAndIncrementSize();
+    mPayload[desc] = std::move(computePipeline);
+    *pipelineOut   = &mPayload[desc];
+
+    return angle::Result::Continue;
+}
+
 // GraphicsPipelineCache implementation.
 template <typename Hash>
-void GraphicsPipelineCache<Hash>::destroy(vk::Context *context)
+void GraphicsPipelineCache<Hash>::destroy(vk::ErrorContext *context)
 {
     if (vk::ShouldDumpPipelineCacheGraph(context) && !mPayload.empty())
     {
@@ -7930,7 +8190,7 @@ void GraphicsPipelineCache<Hash>::destroy(vk::Context *context)
 }
 
 template <typename Hash>
-void GraphicsPipelineCache<Hash>::release(vk::Context *context)
+void GraphicsPipelineCache<Hash>::release(vk::ErrorContext *context)
 {
     if (vk::ShouldDumpPipelineCacheGraph(context) && !mPayload.empty())
     {
@@ -7948,12 +8208,11 @@ void GraphicsPipelineCache<Hash>::release(vk::Context *context)
 
 template <typename Hash>
 angle::Result GraphicsPipelineCache<Hash>::createPipeline(
-    vk::Context *context,
+    vk::ErrorContext *context,
     vk::PipelineCacheAccess *pipelineCache,
     const vk::RenderPass &compatibleRenderPass,
     const vk::PipelineLayout &pipelineLayout,
-    const vk::ShaderModuleMap &shaders,
-    const vk::SpecializationConstants &specConsts,
+    const vk::GraphicsPipelineShadersInfo &shaders,
     PipelineSource source,
     const vk::GraphicsPipelineDesc &desc,
     const vk::GraphicsPipelineDesc **descPtrOut,
@@ -7968,9 +8227,9 @@ angle::Result GraphicsPipelineCache<Hash>::createPipeline(
         constexpr vk::GraphicsPipelineSubset kSubset =
             GraphicsPipelineCacheTypeHelper<Hash>::kSubset;
 
-        ANGLE_VK_TRY(context, desc.initializePipeline(context, pipelineCache, kSubset,
-                                                      compatibleRenderPass, pipelineLayout, shaders,
-                                                      specConsts, &newPipeline, &feedback));
+        ANGLE_VK_TRY(context,
+                     desc.initializePipeline(context, pipelineCache, kSubset, compatibleRenderPass,
+                                             pipelineLayout, shaders, &newPipeline, &feedback));
     }
 
     if (source == PipelineSource::WarmUp)
@@ -7980,37 +8239,16 @@ angle::Result GraphicsPipelineCache<Hash>::createPipeline(
         // pipeline.
         **pipelineOut =
             vk::PipelineHelper(std::move(newPipeline), vk::CacheLookUpFeedback::WarmUpMiss);
+        ASSERT(!shaders.usePipelineLibrary());
     }
     else
     {
         addToCache(source, desc, std::move(newPipeline), feedback, descPtrOut, pipelineOut);
+        if (shaders.usePipelineLibrary())
+        {
+            (*pipelineOut)->setLinkedLibraryReferences(shaders.pipelineLibrary());
+        }
     }
-    return angle::Result::Continue;
-}
-
-template <typename Hash>
-angle::Result GraphicsPipelineCache<Hash>::linkLibraries(
-    vk::Context *context,
-    vk::PipelineCacheAccess *pipelineCache,
-    const vk::GraphicsPipelineDesc &desc,
-    const vk::PipelineLayout &pipelineLayout,
-    vk::PipelineHelper *vertexInputPipeline,
-    vk::PipelineHelper *shadersPipeline,
-    vk::PipelineHelper *fragmentOutputPipeline,
-    const vk::GraphicsPipelineDesc **descPtrOut,
-    vk::PipelineHelper **pipelineOut)
-{
-    vk::Pipeline newPipeline;
-    vk::CacheLookUpFeedback feedback = vk::CacheLookUpFeedback::None;
-
-    ANGLE_TRY(vk::InitializePipelineFromLibraries(
-        context, pipelineCache, pipelineLayout, *vertexInputPipeline, *shadersPipeline,
-        *fragmentOutputPipeline, desc, &newPipeline, &feedback));
-
-    addToCache(PipelineSource::DrawLinked, desc, std::move(newPipeline), feedback, descPtrOut,
-               pipelineOut);
-    (*pipelineOut)->setLinkedLibraryReferences(shadersPipeline);
-
     return angle::Result::Continue;
 }
 
@@ -8080,28 +8318,17 @@ void GraphicsPipelineCache<Hash>::populate(const vk::GraphicsPipelineDesc &desc,
 
 // Instantiate the pipeline cache functions
 template void GraphicsPipelineCache<GraphicsPipelineDescCompleteHash>::destroy(
-    vk::Context *context);
+    vk::ErrorContext *context);
 template void GraphicsPipelineCache<GraphicsPipelineDescCompleteHash>::release(
-    vk::Context *context);
+    vk::ErrorContext *context);
 template angle::Result GraphicsPipelineCache<GraphicsPipelineDescCompleteHash>::createPipeline(
-    vk::Context *context,
+    vk::ErrorContext *context,
     vk::PipelineCacheAccess *pipelineCache,
     const vk::RenderPass &compatibleRenderPass,
     const vk::PipelineLayout &pipelineLayout,
-    const vk::ShaderModuleMap &shaders,
-    const vk::SpecializationConstants &specConsts,
+    const vk::GraphicsPipelineShadersInfo &shaders,
     PipelineSource source,
     const vk::GraphicsPipelineDesc &desc,
-    const vk::GraphicsPipelineDesc **descPtrOut,
-    vk::PipelineHelper **pipelineOut);
-template angle::Result GraphicsPipelineCache<GraphicsPipelineDescCompleteHash>::linkLibraries(
-    vk::Context *context,
-    vk::PipelineCacheAccess *pipelineCache,
-    const vk::GraphicsPipelineDesc &desc,
-    const vk::PipelineLayout &pipelineLayout,
-    vk::PipelineHelper *vertexInputPipeline,
-    vk::PipelineHelper *shadersPipeline,
-    vk::PipelineHelper *fragmentOutputPipeline,
     const vk::GraphicsPipelineDesc **descPtrOut,
     vk::PipelineHelper **pipelineOut);
 template void GraphicsPipelineCache<GraphicsPipelineDescCompleteHash>::populate(
@@ -8109,61 +8336,21 @@ template void GraphicsPipelineCache<GraphicsPipelineDescCompleteHash>::populate(
     vk::Pipeline &&pipeline,
     vk::PipelineHelper **pipelineHelperOut);
 
-template void GraphicsPipelineCache<GraphicsPipelineDescVertexInputHash>::destroy(
-    vk::Context *context);
-template void GraphicsPipelineCache<GraphicsPipelineDescVertexInputHash>::release(
-    vk::Context *context);
-template angle::Result GraphicsPipelineCache<GraphicsPipelineDescVertexInputHash>::createPipeline(
-    vk::Context *context,
-    vk::PipelineCacheAccess *pipelineCache,
-    const vk::RenderPass &compatibleRenderPass,
-    const vk::PipelineLayout &pipelineLayout,
-    const vk::ShaderModuleMap &shaders,
-    const vk::SpecializationConstants &specConsts,
-    PipelineSource source,
-    const vk::GraphicsPipelineDesc &desc,
-    const vk::GraphicsPipelineDesc **descPtrOut,
-    vk::PipelineHelper **pipelineOut);
-template void GraphicsPipelineCache<GraphicsPipelineDescVertexInputHash>::populate(
-    const vk::GraphicsPipelineDesc &desc,
-    vk::Pipeline &&pipeline,
-    vk::PipelineHelper **pipelineHelperOut);
-
-template void GraphicsPipelineCache<GraphicsPipelineDescShadersHash>::destroy(vk::Context *context);
-template void GraphicsPipelineCache<GraphicsPipelineDescShadersHash>::release(vk::Context *context);
+template void GraphicsPipelineCache<GraphicsPipelineDescShadersHash>::destroy(
+    vk::ErrorContext *context);
+template void GraphicsPipelineCache<GraphicsPipelineDescShadersHash>::release(
+    vk::ErrorContext *context);
 template angle::Result GraphicsPipelineCache<GraphicsPipelineDescShadersHash>::createPipeline(
-    vk::Context *context,
+    vk::ErrorContext *context,
     vk::PipelineCacheAccess *pipelineCache,
     const vk::RenderPass &compatibleRenderPass,
     const vk::PipelineLayout &pipelineLayout,
-    const vk::ShaderModuleMap &shaders,
-    const vk::SpecializationConstants &specConsts,
+    const vk::GraphicsPipelineShadersInfo &shaders,
     PipelineSource source,
     const vk::GraphicsPipelineDesc &desc,
     const vk::GraphicsPipelineDesc **descPtrOut,
     vk::PipelineHelper **pipelineOut);
 template void GraphicsPipelineCache<GraphicsPipelineDescShadersHash>::populate(
-    const vk::GraphicsPipelineDesc &desc,
-    vk::Pipeline &&pipeline,
-    vk::PipelineHelper **pipelineHelperOut);
-
-template void GraphicsPipelineCache<GraphicsPipelineDescFragmentOutputHash>::destroy(
-    vk::Context *context);
-template void GraphicsPipelineCache<GraphicsPipelineDescFragmentOutputHash>::release(
-    vk::Context *context);
-template angle::Result
-GraphicsPipelineCache<GraphicsPipelineDescFragmentOutputHash>::createPipeline(
-    vk::Context *context,
-    vk::PipelineCacheAccess *pipelineCache,
-    const vk::RenderPass &compatibleRenderPass,
-    const vk::PipelineLayout &pipelineLayout,
-    const vk::ShaderModuleMap &shaders,
-    const vk::SpecializationConstants &specConsts,
-    PipelineSource source,
-    const vk::GraphicsPipelineDesc &desc,
-    const vk::GraphicsPipelineDesc **descPtrOut,
-    vk::PipelineHelper **pipelineOut);
-template void GraphicsPipelineCache<GraphicsPipelineDescFragmentOutputHash>::populate(
     const vk::GraphicsPipelineDesc &desc,
     vk::Pipeline &&pipeline,
     vk::PipelineHelper **pipelineHelperOut);
@@ -8184,7 +8371,7 @@ void DescriptorSetLayoutCache::destroy(vk::Renderer *renderer)
 }
 
 angle::Result DescriptorSetLayoutCache::getDescriptorSetLayout(
-    vk::Context *context,
+    vk::ErrorContext *context,
     const vk::DescriptorSetLayoutDesc &desc,
     vk::DescriptorSetLayoutPtr *descriptorSetLayoutOut)
 {
@@ -8243,7 +8430,7 @@ void PipelineLayoutCache::destroy(vk::Renderer *renderer)
 }
 
 angle::Result PipelineLayoutCache::getPipelineLayout(
-    vk::Context *context,
+    vk::ErrorContext *context,
     const vk::PipelineLayoutDesc &desc,
     const vk::DescriptorSetLayoutPointerArray &descriptorSetLayouts,
     vk::PipelineLayoutPtr *pipelineLayoutOut)
@@ -8334,7 +8521,7 @@ void SamplerYcbcrConversionCache::destroy(vk::Renderer *renderer)
 }
 
 angle::Result SamplerYcbcrConversionCache::getSamplerYcbcrConversion(
-    vk::Context *context,
+    vk::ErrorContext *context,
     const vk::YcbcrConversionDesc &ycbcrConversionDesc,
     VkSamplerYcbcrConversion *vkSamplerYcbcrConversionOut)
 {
