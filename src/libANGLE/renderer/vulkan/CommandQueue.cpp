@@ -111,6 +111,7 @@ void RecyclableFence::destroy(VkDevice device)
     {
         if (mRecycler != nullptr)
         {
+            mFence.reset(device);
             mRecycler->recycle(std::move(mFence));
         }
         else
@@ -136,7 +137,6 @@ void FenceRecycler::fetch(VkDevice device, Fence *fenceOut)
     if (!mRecycler.empty())
     {
         mRecycler.fetch(fenceOut);
-        fenceOut->reset(device);
     }
 }
 
@@ -249,7 +249,7 @@ VkResult CommandBatch::initFence(VkDevice device, FenceRecycler *recycler)
 
 void CommandBatch::setExternalFence(SharedExternalFence &&externalFence)
 {
-    ASSERT(!hasFence());
+    ASSERT(!mExternalFence);
     mExternalFence = std::move(externalFence);
 }
 
@@ -271,7 +271,6 @@ const SharedExternalFence &CommandBatch::getExternalFence()
 
 bool CommandBatch::hasFence() const
 {
-    ASSERT(!mExternalFence || !mFence);
     ASSERT(!mFence || mFence->valid());
     return mFence || mExternalFence;
 }
@@ -901,11 +900,15 @@ angle::Result CommandQueue::submitCommands(
             submitInfo.pNext                    = &protectedSubmitInfo;
         }
 
-        if (!externalFence)
+        // Initializing a fence is not required if the batch already has an external fence and does
+        // not need an extra fence after its submission.
+        const bool needsOwnedFence =
+            renderer->getFeatures().enableExtraSubmitFence.enabled || !externalFence;
+        if (needsOwnedFence)
         {
-            ANGLE_VK_TRY(context, batch.initFence(context->getDevice(), &mFenceRecycler));
+            ANGLE_VK_TRY(context, batch.initFence(device, &mFenceRecycler));
         }
-        else
+        if (externalFence)
         {
             batch.setExternalFence(std::move(externalFence));
         }
@@ -1005,12 +1008,21 @@ angle::Result CommandQueue::queueSubmitLocked(ErrorContext *context,
         CommandBatch &batch = commandBatch.get();
 
         VkQueue queue = getQueue(contextPriority);
-        VkFence fence = batch.getFenceHandle();
-        ASSERT(fence != VK_NULL_HANDLE);
-        ANGLE_VK_TRY(context, vkQueueSubmit(queue, 1, &submitInfo, fence));
-
         if (batch.getExternalFence())
         {
+            VkFence externalFenceHandle = batch.getExternalFence()->getHandle();
+            ASSERT(externalFenceHandle != VK_NULL_HANDLE);
+            ANGLE_VK_TRY(context, vkQueueSubmit(queue, 1, &submitInfo, externalFenceHandle));
+
+            // If enabled, there will be an extra fence submitted after the primary commands.
+            if (renderer->getFeatures().enableExtraSubmitFence.enabled)
+            {
+                VkFence extraSubmitFence     = batch.getFenceHandle();
+                VkSubmitInfo fenceSubmitInfo = {};
+                fenceSubmitInfo.sType        = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                ANGLE_VK_TRY(context, vkQueueSubmit(queue, 1, &fenceSubmitInfo, extraSubmitFence));
+            }
+
             // exportFd is exporting VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT_KHR type handle which
             // obeys copy semantics. This means that the fence must already be signaled or the work
             // to signal it is in the graphics pipeline at the time we export the fd.
@@ -1018,9 +1030,15 @@ angle::Result CommandQueue::queueSubmitLocked(ErrorContext *context,
             ExternalFence &externalFence       = *batch.getExternalFence();
             VkFenceGetFdInfoKHR fenceGetFdInfo = {};
             fenceGetFdInfo.sType               = VK_STRUCTURE_TYPE_FENCE_GET_FD_INFO_KHR;
-            fenceGetFdInfo.fence               = externalFence.getHandle();
+            fenceGetFdInfo.fence               = externalFenceHandle;
             fenceGetFdInfo.handleType          = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT_KHR;
             externalFence.exportFd(renderer->getDevice(), fenceGetFdInfo);
+        }
+        else
+        {
+            VkFence fence = batch.getFenceHandle();
+            ASSERT(fence != VK_NULL_HANDLE);
+            ANGLE_VK_TRY(context, vkQueueSubmit(queue, 1, &submitInfo, fence));
         }
     }
 
@@ -1223,12 +1241,14 @@ void CommandQueue::popInFlightBatchLocked()
 }
 
 // QueuePriorities:
-constexpr float kVulkanQueuePriorityLow    = 0.0;
-constexpr float kVulkanQueuePriorityMedium = 0.4;
-constexpr float kVulkanQueuePriorityHigh   = 1.0;
+constexpr float kVulkanQueuePriorityLow      = 0.0;
+constexpr float kVulkanQueuePriorityMedium   = 0.4;
+constexpr float kVulkanQueuePriorityHigh     = 0.8;
+constexpr float kVulkanQueuePriorityRealtime = 1.0;
 
 const float QueueFamily::kQueuePriorities[static_cast<uint32_t>(egl::ContextPriority::EnumCount)] =
-    {kVulkanQueuePriorityMedium, kVulkanQueuePriorityHigh, kVulkanQueuePriorityLow};
+    {kVulkanQueuePriorityMedium, kVulkanQueuePriorityHigh, kVulkanQueuePriorityRealtime,
+     kVulkanQueuePriorityLow};
 
 DeviceQueueMap::~DeviceQueueMap() {}
 
@@ -1256,9 +1276,10 @@ void DeviceQueueMap::initialize(VkDevice device,
                                 uint32_t queueCount)
 {
     // QueueIndexing:
-    constexpr uint32_t kQueueIndexMedium = 0;
-    constexpr uint32_t kQueueIndexHigh   = 1;
-    constexpr uint32_t kQueueIndexLow    = 2;
+    constexpr uint32_t kQueueIndexMedium   = 0;
+    constexpr uint32_t kQueueIndexHigh     = 1;
+    constexpr uint32_t kQueueIndexRealtime = 2;
+    constexpr uint32_t kQueueIndexLow      = 3;
 
     ASSERT(queueCount);
     ASSERT((queueIndex + queueCount) <= queueFamily.getProperties()->queueCount);
@@ -1284,8 +1305,29 @@ void DeviceQueueMap::initialize(VkDevice device,
         mQueueAndIndices[egl::ContextPriority::High] =
             mQueueAndIndices[egl::ContextPriority::Medium];
     }
-    // If at least 3 queues, Low has its own queue. Adjust Low priority.
+
+    // If at least 3 queues, Realtime has its own queue
     if (queueCount > 2)
+    {
+        GetDeviceQueue(device, makeProtected, mQueueFamilyIndex, queueIndex + kQueueIndexRealtime,
+                       &queue);
+        mQueueAndIndices[egl::ContextPriority::Realtime] = {egl::ContextPriority::Realtime, queue,
+                                                            queueIndex + kQueueIndexRealtime};
+    }
+    else if (queueCount > 1)
+    {
+        // If only 2 queues, Realtime uses queue of High priority
+        mQueueAndIndices[egl::ContextPriority::Realtime] =
+            mQueueAndIndices[egl::ContextPriority::High];
+    }
+    else
+    {
+        mQueueAndIndices[egl::ContextPriority::Realtime] =
+            mQueueAndIndices[egl::ContextPriority::Medium];
+    }
+
+    // If at least 4 queues, Low has its own queue. Adjust Low priority.
+    if (queueCount > 3)
     {
         GetDeviceQueue(device, makeProtected, mQueueFamilyIndex, queueIndex + kQueueIndexLow,
                        &queue);

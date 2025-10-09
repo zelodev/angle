@@ -3,9 +3,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
-// TracePerf:
+// TracePerfTest.cpp:
 //   Performance test for ANGLE replaying traces.
 //
+
+#ifdef UNSAFE_BUFFERS_BUILD
+#    pragma allow_unsafe_buffers
+#endif
 
 #include "tests/perf_tests/TracePerfTest.h"
 #include <gtest/gtest.h>
@@ -136,6 +140,7 @@ class TracePerfTest : public ANGLERenderTest
 
     bool loadTestExpectationsFromFileWithConfig(const GPUTestConfig &config,
                                                 const std::string &fileName);
+    void initializeConfigParams(GPUTestConfig::API api);
 
   private:
     struct QueryInfo
@@ -369,6 +374,15 @@ void KHRONOS_APIENTRY DrawElementsInstancedMinimizedProc(GLenum mode,
     glDrawElementsInstanced(GL_POINTS, 1, type, indices, 1);
 }
 
+void KHRONOS_APIENTRY DrawElementsInstancedEXTMinimizedProc(GLenum mode,
+                                                            GLsizei count,
+                                                            GLenum type,
+                                                            const void *indices,
+                                                            GLsizei instancecount)
+{
+    glDrawElementsInstancedEXT(GL_POINTS, 1, type, indices, 1);
+}
+
 void KHRONOS_APIENTRY DrawElementsBaseVertexMinimizedProc(GLenum mode,
                                                           GLsizei count,
                                                           GLenum type,
@@ -376,6 +390,24 @@ void KHRONOS_APIENTRY DrawElementsBaseVertexMinimizedProc(GLenum mode,
                                                           GLint basevertex)
 {
     glDrawElementsBaseVertex(GL_POINTS, 1, type, indices, basevertex);
+}
+
+void KHRONOS_APIENTRY DrawElementsBaseVertexEXTMinimizedProc(GLenum mode,
+                                                             GLsizei count,
+                                                             GLenum type,
+                                                             const void *indices,
+                                                             GLint basevertex)
+{
+    glDrawElementsBaseVertexEXT(GL_POINTS, 1, type, indices, basevertex);
+}
+
+void KHRONOS_APIENTRY DrawElementsBaseVertexOESMinimizedProc(GLenum mode,
+                                                             GLsizei count,
+                                                             GLenum type,
+                                                             const void *indices,
+                                                             GLint basevertex)
+{
+    glDrawElementsBaseVertexOES(GL_POINTS, 1, type, indices, basevertex);
 }
 
 void KHRONOS_APIENTRY DrawElementsInstancedBaseVertexMinimizedProc(GLenum mode,
@@ -386,6 +418,26 @@ void KHRONOS_APIENTRY DrawElementsInstancedBaseVertexMinimizedProc(GLenum mode,
                                                                    GLint basevertex)
 {
     glDrawElementsInstancedBaseVertex(GL_POINTS, 1, type, indices, 1, basevertex);
+}
+
+void KHRONOS_APIENTRY DrawElementsInstancedBaseVertexEXTMinimizedProc(GLenum mode,
+                                                                      GLsizei count,
+                                                                      GLenum type,
+                                                                      const void *indices,
+                                                                      GLsizei instancecount,
+                                                                      GLint basevertex)
+{
+    glDrawElementsInstancedBaseVertexEXT(GL_POINTS, 1, type, indices, 1, basevertex);
+}
+
+void KHRONOS_APIENTRY DrawElementsInstancedBaseVertexOESMinimizedProc(GLenum mode,
+                                                                      GLsizei count,
+                                                                      GLenum type,
+                                                                      const void *indices,
+                                                                      GLsizei instancecount,
+                                                                      GLint basevertex)
+{
+    glDrawElementsInstancedBaseVertexOES(GL_POINTS, 1, type, indices, 1, basevertex);
 }
 
 void KHRONOS_APIENTRY DrawRangeElementsMinimizedProc(GLenum mode,
@@ -409,6 +461,14 @@ void KHRONOS_APIENTRY DrawArraysInstancedMinimizedProc(GLenum mode,
                                                        GLsizei instancecount)
 {
     glDrawArraysInstanced(GL_POINTS, first, 1, 1);
+}
+
+void KHRONOS_APIENTRY DrawArraysInstancedEXTMinimizedProc(GLenum mode,
+                                                          GLint first,
+                                                          GLsizei count,
+                                                          GLsizei instancecount)
+{
+    glDrawArraysInstancedEXT(GL_POINTS, first, 1, 1);
 }
 
 void KHRONOS_APIENTRY DrawArraysIndirectMinimizedProc(GLenum mode, const void *indirect)
@@ -454,6 +514,15 @@ void *KHRONOS_APIENTRY MapBufferRangeMinimizedProc(GLenum target,
 {
     access |= GL_MAP_UNSYNCHRONIZED_BIT;
     return glMapBufferRange(target, offset, length, access);
+}
+
+void *KHRONOS_APIENTRY MapBufferRangeEXTMinimizedProc(GLenum target,
+                                                      GLintptr offset,
+                                                      GLsizeiptr length,
+                                                      GLbitfield access)
+{
+    access |= GL_MAP_UNSYNCHRONIZED_BIT;
+    return glMapBufferRangeEXT(target, offset, length, access);
 }
 
 void KHRONOS_APIENTRY TexImage2DMinimizedProc(GLenum target,
@@ -542,6 +611,8 @@ void KHRONOS_APIENTRY GenerateMipmapMinimizedProc(GLenum target)
     // other issues. If this turns out to be a real issue with app traces, we can turn this into a
     // glTexImage2D call for each generated level.
 }
+
+void KHRONOS_APIENTRY GenerateMipmapOESMinimizedProc(GLenum target) {}
 
 void KHRONOS_APIENTRY BlitFramebufferMinimizedProc(GLint srcX0,
                                                    GLint srcY0,
@@ -666,116 +737,48 @@ angle::GenericProc KHRONOS_APIENTRY TraceLoadProc(const char *procName)
 
     if (gMinimizeGPUWork)
     {
-        if (strcmp(procName, "glViewport") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(ViewportMinimizedProc);
-        }
+#define MINIMIZED(EntryPoint)                                                   \
+    if (strcmp(procName, "gl" #EntryPoint) == 0)                                \
+    {                                                                           \
+        return reinterpret_cast<angle::GenericProc>(EntryPoint##MinimizedProc); \
+    }
 
-        if (strcmp(procName, "glScissor") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(ScissorMinimizedProc);
-        }
+        MINIMIZED(Viewport)
+        MINIMIZED(Scissor)
 
         // Interpose the calls that generate actual GPU work
-        if (strcmp(procName, "glDrawElements") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(DrawElementsMinimizedProc);
-        }
-        if (strcmp(procName, "glDrawElementsIndirect") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(DrawElementsIndirectMinimizedProc);
-        }
-        if (strcmp(procName, "glDrawElementsInstanced") == 0 ||
-            strcmp(procName, "glDrawElementsInstancedEXT") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(DrawElementsInstancedMinimizedProc);
-        }
-        if (strcmp(procName, "glDrawElementsBaseVertex") == 0 ||
-            strcmp(procName, "glDrawElementsBaseVertexEXT") == 0 ||
-            strcmp(procName, "glDrawElementsBaseVertexOES") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(DrawElementsBaseVertexMinimizedProc);
-        }
-        if (strcmp(procName, "glDrawElementsInstancedBaseVertex") == 0 ||
-            strcmp(procName, "glDrawElementsInstancedBaseVertexEXT") == 0 ||
-            strcmp(procName, "glDrawElementsInstancedBaseVertexOES") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(
-                DrawElementsInstancedBaseVertexMinimizedProc);
-        }
-        if (strcmp(procName, "glDrawRangeElements") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(DrawRangeElementsMinimizedProc);
-        }
-        if (strcmp(procName, "glDrawArrays") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(DrawArraysMinimizedProc);
-        }
-        if (strcmp(procName, "glDrawArraysInstanced") == 0 ||
-            strcmp(procName, "glDrawArraysInstancedEXT") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(DrawArraysInstancedMinimizedProc);
-        }
-        if (strcmp(procName, "glDrawArraysIndirect") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(DrawArraysIndirectMinimizedProc);
-        }
-        if (strcmp(procName, "glDispatchCompute") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(DispatchComputeMinimizedProc);
-        }
-        if (strcmp(procName, "glDispatchComputeIndirect") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(DispatchComputeIndirectMinimizedProc);
-        }
+        MINIMIZED(DrawElements)
+        MINIMIZED(DrawElementsIndirect)
+        MINIMIZED(DrawElementsInstanced)
+        MINIMIZED(DrawElementsInstancedEXT)
+        MINIMIZED(DrawElementsBaseVertex)
+        MINIMIZED(DrawElementsBaseVertexEXT)
+        MINIMIZED(DrawElementsBaseVertexOES)
+        MINIMIZED(DrawElementsInstancedBaseVertex)
+        MINIMIZED(DrawElementsInstancedBaseVertexEXT)
+        MINIMIZED(DrawElementsInstancedBaseVertexOES)
+        MINIMIZED(DrawRangeElements)
+        MINIMIZED(DrawArrays)
+        MINIMIZED(DrawArraysInstanced)
+        MINIMIZED(DrawArraysInstancedEXT)
+        MINIMIZED(DrawArraysIndirect)
+        MINIMIZED(DispatchCompute)
+        MINIMIZED(DispatchComputeIndirect)
 
         // Interpose the calls that generate data copying work
-        if (strcmp(procName, "glBufferData") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(BufferDataMinimizedProc);
-        }
-        if (strcmp(procName, "glBufferSubData") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(BufferSubDataMinimizedProc);
-        }
-        if (strcmp(procName, "glMapBufferRange") == 0 ||
-            strcmp(procName, "glMapBufferRangeEXT") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(MapBufferRangeMinimizedProc);
-        }
-        if (strcmp(procName, "glTexImage2D") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(TexImage2DMinimizedProc);
-        }
-        if (strcmp(procName, "glTexImage3D") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(TexImage3DMinimizedProc);
-        }
-        if (strcmp(procName, "glTexSubImage2D") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(TexSubImage2DMinimizedProc);
-        }
-        if (strcmp(procName, "glTexSubImage3D") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(TexSubImage3DMinimizedProc);
-        }
-        if (strcmp(procName, "glGenerateMipmap") == 0 ||
-            strcmp(procName, "glGenerateMipmapOES") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(GenerateMipmapMinimizedProc);
-        }
-        if (strcmp(procName, "glBlitFramebuffer") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(BlitFramebufferMinimizedProc);
-        }
-        if (strcmp(procName, "glReadPixels") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(ReadPixelsMinimizedProc);
-        }
-        if (strcmp(procName, "glBeginTransformFeedback") == 0)
-        {
-            return reinterpret_cast<angle::GenericProc>(BeginTransformFeedbackMinimizedProc);
-        }
+        MINIMIZED(BufferData)
+        MINIMIZED(BufferSubData)
+        MINIMIZED(MapBufferRange)
+        MINIMIZED(MapBufferRangeEXT)
+        MINIMIZED(TexImage2D)
+        MINIMIZED(TexImage3D)
+        MINIMIZED(TexSubImage2D)
+        MINIMIZED(TexSubImage3D)
+        MINIMIZED(GenerateMipmap)
+        MINIMIZED(GenerateMipmapOES)
+        MINIMIZED(BlitFramebuffer)
+        MINIMIZED(ReadPixels)
+        MINIMIZED(BeginTransformFeedback)
     }
 
     return gCurrentTracePerfTest->getGLWindow()->getProcAddress(procName);
@@ -861,6 +864,27 @@ bool TracePerfTest::loadTestExpectationsFromFileWithConfig(const GPUTestConfig &
     return true;
 }
 
+void TracePerfTest::initializeConfigParams(GPUTestConfig::API api)
+{
+    // TODO (b/423678565): These config parameters will be overridden by ANGLERenderTest::SetUp().
+    ConfigParameters &configParams = getConfigParams();
+    configParams.redBits           = mParams->traceInfo.configRedBits;
+    configParams.greenBits         = mParams->traceInfo.configGreenBits;
+    configParams.blueBits          = mParams->traceInfo.configBlueBits;
+    configParams.alphaBits         = mParams->traceInfo.configAlphaBits;
+    configParams.depthBits         = mParams->traceInfo.configDepthBits;
+    configParams.stencilBits       = mParams->traceInfo.configStencilBits;
+    configParams.colorSpace        = mParams->traceInfo.drawSurfaceColorSpace;
+
+    // TODO (b/423680521): App traces shouldn't be relying on these extensions anyway, since they
+    // are not available when the real app is running on a real device, so these values should
+    // always match the defaults to begin with.
+    configParams.webGLCompatibility    = mParams->traceInfo.isWebGLCompatibilityEnabled;
+    configParams.robustResourceInit    = mParams->traceInfo.isRobustResourceInitEnabled;
+    configParams.bindGeneratesResource = mParams->traceInfo.isBindGeneratesResourcesEnabled;
+    configParams.clientArraysEnabled   = mParams->traceInfo.areClientArraysEnabled;
+}
+
 TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
     : ANGLERenderTest("TracePerf", *params.get(), "ms"),
       mParams(std::move(params)),
@@ -904,6 +928,8 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         failTest("Failed to load trace json.");
         return;
     }
+
+    initializeConfigParams(api);
 
     for (std::string extension : mParams->traceInfo.requiredExtensions)
     {
@@ -952,8 +978,6 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (traceNameIs("genshin_impact"))
     {
-        addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
-
         if (!Is64Bit())
         {
             skipTest("Genshin is too large to handle in 32-bit mode");
@@ -1095,7 +1119,6 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
 
     if (traceNameIs("cookie_run_kingdom"))
     {
-        addExtensionPrerequisite("GL_EXT_texture_cube_map_array");
         addExtensionPrerequisite("GL_OES_EGL_image_external");
     }
 
@@ -1115,11 +1138,6 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
     }
 
     if (traceNameIs("nier_reincarnation"))
-    {
-        addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
-    }
-
-    if (traceNameIs("pokemon_unite"))
     {
         addExtensionPrerequisite("GL_KHR_texture_compression_astc_ldr");
     }
@@ -1300,8 +1318,13 @@ TracePerfTest::TracePerfTest(std::unique_ptr<const TracePerfParams> params)
         addExtensionPrerequisite("GL_OES_framebuffer_object");
     }
 
-    // glDebugMessageControlKHR and glDebugMessageCallbackKHR crash on ARM GLES1.
-    if (IsARM() && mParams->traceInfo.contextClientMajorVersion == 1)
+    if (traceNameIs("minecraft_vibrant_visuals"))
+    {
+        addIntegerPrerequisite(GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, 1024);
+    }
+
+    // GL_KHR_debug does not work on Android for GLES1
+    if (IsAndroid() && mParams->traceInfo.contextClientMajorVersion == 1)
     {
         mEnableDebugCallback = false;
     }

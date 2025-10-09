@@ -26,8 +26,10 @@ enum class BufferType
 
 enum class IndexDataNeedsStreaming
 {
-    Yes,
-    No,
+    LineLoopStreaming,
+    TriangleFanStreaming,
+    NonEmulatedStreaming,
+    None,
 };
 
 struct VertexBufferWithOffset
@@ -39,7 +41,8 @@ struct VertexBufferWithOffset
 class VertexArrayWgpu : public VertexArrayImpl
 {
   public:
-    VertexArrayWgpu(const gl::VertexArrayState &data);
+    VertexArrayWgpu(const gl::VertexArrayState &data,
+                    const gl::VertexArrayBuffers &vertexArrayBuffers);
 
     angle::Result syncState(const gl::Context *context,
                             const gl::VertexArray::DirtyBits &dirtyBits,
@@ -66,6 +69,15 @@ class VertexArrayWgpu : public VertexArrayImpl
                                    uint32_t *indexCountOut);
 
   private:
+    struct BufferCopy
+    {
+        uint64_t sourceOffset;
+        webgpu::BufferHelper *src;
+        webgpu::BufferHelper *dest;
+        uint64_t destOffset;
+        uint64_t size;
+    };
+
     angle::Result syncDirtyAttrib(ContextWgpu *contextWgpu,
                                   const gl::VertexAttribute &attrib,
                                   const gl::VertexBinding &binding,
@@ -76,8 +88,62 @@ class VertexArrayWgpu : public VertexArrayImpl
                                       webgpu::BufferHelper &buffer,
                                       size_t size,
                                       size_t attribIndex,
-                                      wgpu::BufferUsage usage,
+                                      WGPUBufferUsage usage,
                                       BufferType bufferType);
+
+    IndexDataNeedsStreaming determineIndexDataNeedsStreaming(
+        gl::DrawElementsType sourceDrawElementsTypeOrInvalid,
+        GLsizei count,
+        gl::PrimitiveMode mode,
+        gl::DrawElementsType *destDrawElementsTypeOrInvalidOut);
+
+    uint32_t calculateAdjustedIndexCount(gl::PrimitiveMode mode,
+                                         bool primitiveRestartEnabled,
+                                         gl::DrawElementsType destDrawElementsTypeOrInvalid,
+                                         GLsizei count,
+                                         const uint8_t *srcIndexData);
+
+    angle::Result calculateStagingBufferSize(ContextWgpu *contextWgpu,
+                                             bool srcDestDrawElementsTypeEqual,
+                                             bool primitiveRestartEnabled,
+                                             IndexDataNeedsStreaming indexDataNeedsStreaming,
+                                             gl::DrawElementsType destDrawElementsTypeOrInvalid,
+                                             GLsizei adjustedCountForStreamedIndices,
+                                             gl::AttributesMask clientAttributesToSync,
+                                             GLsizei instanceCount,
+                                             std::optional<gl::IndexRange> indexRange,
+                                             size_t *stagingBufferSizeOut);
+
+    gl::DrawElementsType calculateDrawElementsType(
+        gl::DrawElementsType sourceDrawElementsTypeOrInvalid,
+        GLsizei count);
+
+    angle::Result streamIndicesLineLoop(ContextWgpu *contextWgpu,
+                                        gl::DrawElementsType sourceDrawElementsTypeOrInvalid,
+                                        gl::DrawElementsType destDrawElementsTypeOrInvalid,
+                                        GLsizei count,
+                                        GLsizei adjustedCount,
+                                        const void *indices,
+                                        bool primitiveRestartEnabled,
+                                        uint8_t *stagingData,
+                                        size_t destIndexBufferSize,
+                                        std::optional<gl::IndexRange> indexRange,
+                                        const uint8_t *srcIndexData,
+                                        webgpu::BufferHelper *stagingBufferPtr,
+                                        std::vector<BufferCopy> *stagingUploadsOut,
+                                        size_t *currentStagingDataPositionOut);
+
+    angle::Result streamIndicesDefault(ContextWgpu *contextWgpu,
+                                       gl::DrawElementsType sourceDrawElementsTypeOrInvalid,
+                                       gl::DrawElementsType destDrawElementsTypeOrInvalid,
+                                       gl::PrimitiveMode mode,
+                                       GLsizei count,
+                                       const void *indices,
+                                       uint8_t *stagingData,
+                                       size_t destIndexBufferSize,
+                                       webgpu::BufferHelper *stagingBufferPtr,
+                                       std::vector<BufferCopy> *stagingUploadsOut,
+                                       size_t *currentStagingDataPositionOut);
 
     gl::AttribArray<webgpu::PackedVertexAttribute> mCurrentAttribs;
     gl::AttribArray<webgpu::BufferHelper> mStreamingArrayBuffers;

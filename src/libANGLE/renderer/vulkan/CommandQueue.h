@@ -102,6 +102,8 @@ class CommandBatch final : angle::NonCopyable
     const PrimaryCommandBuffer &getPrimaryCommands() const;
     const SharedExternalFence &getExternalFence();
 
+    // Accessing the shared fence is prioritized before the shared external fence, since the shared
+    // fence may be used in an extra empty submission after the external fence (via a feature flag).
     bool hasFence() const;
     VkFence getFenceHandle() const;
     VkResult getFenceStatus(VkDevice device) const;
@@ -589,8 +591,8 @@ class [[nodiscard]] ScopedPrimaryCommandBuffer final
 
     DeviceScoped<PrimaryCommandBuffer> unlockAndRelease()
     {
-        ASSERT(mCommandBuffer.get().valid() && mPoolLock.owns_lock() ||
-               !mCommandBuffer.get().valid() && mPoolLock.mutex() == nullptr);
+        ASSERT((mCommandBuffer.get().valid() && mPoolLock.owns_lock()) ||
+               (!mCommandBuffer.get().valid() && mPoolLock.mutex() == nullptr));
         mPoolLock = {};
         return std::move(mCommandBuffer);
     }
