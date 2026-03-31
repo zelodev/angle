@@ -15,6 +15,7 @@
 #include "libANGLE/renderer/vulkan/vk_cache_utils.h"
 
 #include "common/aligned_memory.h"
+#include "common/span.h"
 #include "common/system_utils.h"
 #include "libANGLE/BlobCache.h"
 #include "libANGLE/VertexAttribute.h"
@@ -407,10 +408,14 @@ void DeriveRenderingInfo(Renderer *renderer,
                 static_cast<vk::ImageAccess>(ops[attachmentCount].initialLayout));
             const VkImageLayout resolveImageLayout = renderer->getVkImageLayout(
                 static_cast<vk::ImageAccess>(ops[attachmentCount].finalResolveLayout));
+            const bool hasColorResolveAttachment = desc.hasColorResolveAttachment(colorIndexGL);
+            const bool isIntegerFormat           = angle::Format::Get(attachmentFormatID).isInt();
             const VkResolveModeFlagBits resolveMode =
                 isYUVExternalFormat ? VK_RESOLVE_MODE_EXTERNAL_FORMAT_DOWNSAMPLE_ANDROID
-                : desc.hasColorResolveAttachment(colorIndexGL) ? VK_RESOLVE_MODE_AVERAGE_BIT
-                                                               : VK_RESOLVE_MODE_NONE;
+                : hasColorResolveAttachment || desc.isRenderToTexture()
+                    ? isIntegerFormat ? VK_RESOLVE_MODE_SAMPLE_ZERO_BIT
+                                      : VK_RESOLVE_MODE_AVERAGE_BIT
+                    : VK_RESOLVE_MODE_NONE;
             const RenderPassLoadOp loadOp =
                 static_cast<RenderPassLoadOp>(ops[attachmentCount].loadOp);
             const RenderPassStoreOp storeOp =
@@ -437,7 +442,7 @@ void DeriveRenderingInfo(Renderer *renderer,
             }
             infoOut->colorAttachmentInfo[attachmentCount.get()].imageView =
                 attachmentViews[attachmentCount.get()];
-            if (resolveMode != VK_RESOLVE_MODE_NONE)
+            if (resolveMode != VK_RESOLVE_MODE_NONE && !desc.isRenderToTexture())
             {
                 infoOut->colorAttachmentInfo[attachmentCount.get()].resolveImageView =
                     attachmentViews[RenderPassFramebuffer::kColorResolveAttachmentBegin +
@@ -1087,8 +1092,9 @@ void InitializeUnresolveSubpassDependencies(const SubpassVector<VkSubpassDescrip
     constexpr VkAccessFlags kColorReadWriteFlags =
         kColorWriteFlags | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
 
+    // Note that LOAD_OP_LOAD happens in the EARLY_FRAGMENT_TESTS stage.
     constexpr VkPipelineStageFlags kDepthStencilWriteStage =
-        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
     constexpr VkPipelineStageFlags kDepthStencilReadWriteStage =
         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
     constexpr VkAccessFlags kDepthStencilWriteFlags = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
@@ -1110,10 +1116,12 @@ void InitializeUnresolveSubpassDependencies(const SubpassVector<VkSubpassDescrip
 
     if (unresolveDepthStencil)
     {
+        // Note that depth/stencil resolve happens in the color output stage and uses the color
+        // write access flag.
         attachmentWriteStages |= kDepthStencilWriteStage;
-        attachmentReadWriteStages |= kDepthStencilReadWriteStage;
+        attachmentReadWriteStages |= kDepthStencilReadWriteStage | kColorReadWriteStage;
         attachmentWriteFlags |= kDepthStencilWriteFlags;
-        attachmentReadWriteFlags |= kDepthStencilReadWriteFlags;
+        attachmentReadWriteFlags |= kDepthStencilReadWriteFlags | kColorReadWriteFlags;
     }
 
     dependency->sType           = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
@@ -2925,7 +2933,7 @@ void RenderPassDesc::setWriteControlMode(gl::SrgbWriteControlMode mode)
 
 size_t RenderPassDesc::hash() const
 {
-    return angle::ComputeGenericHash(*this);
+    return angle::ComputeGenericHash(angle::byte_span_from_ref(*this));
 }
 
 bool RenderPassDesc::isColorAttachmentEnabled(size_t colorIndexGL) const
@@ -3205,20 +3213,19 @@ size_t ComputePipelineDesc::hash() const
 
     size_t paddedPipelineOptions = mPipelineOptions.permutationIndex;
     size_t pipelineOptionsHash =
-        angle::ComputeGenericHash(&paddedPipelineOptions, sizeof(paddedPipelineOptions));
+        angle::ComputeGenericHash(angle::byte_span_from_ref(paddedPipelineOptions));
 
     size_t specializationConstantIDsHash = 0;
     if (!mConstantIds.empty())
     {
         specializationConstantIDsHash =
-            angle::ComputeGenericHash(mConstantIds.data(), mConstantIds.size() * sizeof(uint32_t));
+            angle::ComputeGenericHash(angle::as_byte_span(mConstantIds));
     }
 
     size_t specializationConstantsHash = 0;
     if (!mConstants.empty())
     {
-        specializationConstantsHash =
-            angle::ComputeGenericHash(mConstants.data(), mConstants.size() * sizeof(uint32_t));
+        specializationConstantsHash = angle::ComputeGenericHash(angle::as_byte_span(mConstants));
     }
 
     return pipelineOptionsHash ^ specializationConstantIDsHash ^ specializationConstantsHash;
@@ -3292,14 +3299,18 @@ const void *GraphicsPipelineDesc::getPipelineSubsetMemory(GraphicsPipelineSubset
                       sizeof(PackedVertexInputAttributes) ==
                   sizeof(GraphicsPipelineDesc));
 
+    // Vertex input dynamic state and vertex input binding stride should not be enabled at the same
+    // time. It is preferable to use vertex input over binding stride.
+    ASSERT(!mVertexInput.inputAssembly.bits.useVertexInputBindingStrideDynamicState ||
+           !mVertexInput.inputAssembly.bits.useVertexInputDynamicState);
     size_t vertexInputReduceSize = 0;
-    if (mVertexInput.inputAssembly.bits.useVertexInputBindingStrideDynamicState)
-    {
-        vertexInputReduceSize = sizeof(PackedVertexInputAttributes::strides);
-    }
-    else if (mVertexInput.inputAssembly.bits.useVertexInputDynamicState)
+    if (mVertexInput.inputAssembly.bits.useVertexInputDynamicState)
     {
         vertexInputReduceSize = sizeof(PackedVertexInputAttributes);
+    }
+    else if (mVertexInput.inputAssembly.bits.useVertexInputBindingStrideDynamicState)
+    {
+        vertexInputReduceSize = sizeof(PackedVertexInputAttributes::strides);
     }
 
     switch (subset)
@@ -3320,7 +3331,7 @@ size_t GraphicsPipelineDesc::hash(GraphicsPipelineSubset subset) const
     size_t keySize  = 0;
     const void *key = getPipelineSubsetMemory(subset, &keySize);
 
-    return angle::ComputeGenericHash(key, keySize);
+    return angle::ComputeGenericHash(angle::Span(static_cast<const uint8_t *>(key), keySize));
 }
 
 bool GraphicsPipelineDesc::keyEqual(const GraphicsPipelineDesc &other,
@@ -3857,6 +3868,10 @@ void GraphicsPipelineDesc::initializePipelineVertexInputState(
     {
         dynamicStateListOut->push_back(VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE);
     }
+    if (context->getFeatures().usePrimitiveTopologyDynamicState.enabled)
+    {
+        dynamicStateListOut->push_back(VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY_EXT);
+    }
     if (context->getFeatures().usePrimitiveRestartEnableDynamicState.enabled)
     {
         dynamicStateListOut->push_back(VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE);
@@ -4238,6 +4253,17 @@ void GraphicsPipelineDesc::initializePipelineFragmentOutputState(
     }
 }
 
+void GraphicsPipelineDesc::updateVertexInputWithStride(ContextVk *contextVk,
+                                                       GraphicsPipelineTransitionBits *transition,
+                                                       uint32_t attribIndex,
+                                                       GLuint stride)
+{
+    SetBitField(mVertexInput.vertex.strides[attribIndex], stride);
+    transition->set(
+        ANGLE_GET_INDEXED_TRANSITION_BIT(mVertexInput.vertex.strides, attribIndex,
+                                         sizeof(mVertexInput.vertex.strides[0]) * kBitsPerByte));
+}
+
 void GraphicsPipelineDesc::updateVertexInput(ContextVk *contextVk,
                                              GraphicsPipelineTransitionBits *transition,
                                              uint32_t attribIndex,
@@ -4269,10 +4295,7 @@ void GraphicsPipelineDesc::updateVertexInput(ContextVk *contextVk,
 
     if (!contextVk->getFeatures().useVertexInputBindingStrideDynamicState.enabled)
     {
-        SetBitField(mVertexInput.vertex.strides[attribIndex], stride);
-        transition->set(ANGLE_GET_INDEXED_TRANSITION_BIT(
-            mVertexInput.vertex.strides, attribIndex,
-            sizeof(mVertexInput.vertex.strides[0]) * kBitsPerByte));
+        updateVertexInputWithStride(contextVk, transition, attribIndex, stride);
     }
 }
 
@@ -4921,7 +4944,7 @@ void AttachmentOpsArray::setClearStencilOp(PackedAttachmentIndex index)
 
 size_t AttachmentOpsArray::hash() const
 {
-    return angle::ComputeGenericHash(mOps);
+    return angle::ComputeGenericHash(angle::byte_span_from_ref(mOps));
 }
 
 bool operator==(const AttachmentOpsArray &lhs, const AttachmentOpsArray &rhs)
@@ -4943,23 +4966,17 @@ DescriptorSetLayoutDesc &DescriptorSetLayoutDesc::operator=(const DescriptorSetL
 
 size_t DescriptorSetLayoutDesc::hash() const
 {
-    size_t validDescriptorSetLayoutBindingsCount = mDescriptorSetLayoutBindings.size();
-    size_t validImmutableSamplersCount           = mImmutableSamplers.size();
-
-    ASSERT(validDescriptorSetLayoutBindingsCount != 0 || validImmutableSamplersCount == 0);
+    ASSERT(!mDescriptorSetLayoutBindings.empty() || mImmutableSamplers.empty());
 
     size_t genericHash = 0;
-    if (validDescriptorSetLayoutBindingsCount > 0)
+    if (!mDescriptorSetLayoutBindings.empty())
     {
-        genericHash = angle::ComputeGenericHash(
-            mDescriptorSetLayoutBindings.data(),
-            validDescriptorSetLayoutBindingsCount * sizeof(PackedDescriptorSetBinding));
+        genericHash = angle::ComputeGenericHash(angle::as_byte_span(mDescriptorSetLayoutBindings));
     }
 
-    if (validImmutableSamplersCount > 0)
+    if (!mImmutableSamplers.empty())
     {
-        genericHash ^= angle::ComputeGenericHash(mImmutableSamplers.data(),
-                                                 validImmutableSamplersCount * sizeof(VkSampler));
+        genericHash ^= angle::ComputeGenericHash(angle::as_byte_span(mImmutableSamplers));
     }
 
     return genericHash;
@@ -5058,7 +5075,7 @@ PipelineLayoutDesc &PipelineLayoutDesc::operator=(const PipelineLayoutDesc &rhs)
 
 size_t PipelineLayoutDesc::hash() const
 {
-    size_t genericHash = angle::ComputeGenericHash(mPushConstantRange);
+    size_t genericHash = angle::ComputeGenericHash(angle::byte_span_from_ref(mPushConstantRange));
     for (const DescriptorSetLayoutDesc &descriptorSetLayoutDesc : mDescriptorSetLayouts)
     {
         genericHash ^= descriptorSetLayoutDesc.hash();
@@ -5311,9 +5328,7 @@ size_t DescriptorSetDesc::hash() const
     {
         return 0;
     }
-
-    return angle::ComputeGenericHash(mDescriptorInfos.data(),
-                                     sizeof(mDescriptorInfos[0]) * mDescriptorInfos.size());
+    return angle::ComputeGenericHash(angle::as_byte_span(mDescriptorInfos));
 }
 
 // FramebufferDesc implementation.
@@ -5376,7 +5391,7 @@ bool FramebufferDesc::hasFragmentShadingRateAttachment() const
 
 size_t FramebufferDesc::hash() const
 {
-    return angle::ComputeGenericHash(&mSerials, sizeof(mSerials[0]) * mMaxIndex) ^
+    return angle::ComputeGenericHash(angle::as_bytes(angle::Span(mSerials).first(mMaxIndex))) ^
            mHasColorFramebufferFetch << 26 ^ mIsRenderToTexture << 25 ^ mLayerCount << 16 ^
            mUnresolveAttachmentMask;
 }
@@ -5479,12 +5494,17 @@ YcbcrConversionDesc &YcbcrConversionDesc::operator=(const YcbcrConversionDesc &r
 
 size_t YcbcrConversionDesc::hash() const
 {
-    return angle::ComputeGenericHash(*this);
+    return angle::ComputeGenericHash(angle::byte_span_from_ref(*this));
 }
 
 bool YcbcrConversionDesc::operator==(const YcbcrConversionDesc &other) const
 {
     return memcmp(this, &other, sizeof(YcbcrConversionDesc)) == 0;
+}
+
+bool YcbcrConversionDesc::operator!=(const YcbcrConversionDesc &other) const
+{
+    return !(*this == other);
 }
 
 void YcbcrConversionDesc::reset()
@@ -5860,7 +5880,7 @@ angle::Result SamplerDesc::init(ContextVk *contextVk, Sampler *sampler) const
 
 size_t SamplerDesc::hash() const
 {
-    return angle::ComputeGenericHash(*this);
+    return angle::ComputeGenericHash(angle::byte_span_from_ref(*this));
 }
 
 bool SamplerDesc::operator==(const SamplerDesc &other) const
@@ -6203,8 +6223,9 @@ std::ostream &operator<<(std::ostream &os, const DescriptorSetDesc &desc)
     for (uint32_t index = 0; index < desc.size(); ++index)
     {
         const DescriptorInfoDesc &infoDesc = desc.getInfoDesc(index);
-        os << "{" << infoDesc.samplerOrBufferSerial << ", " << infoDesc.imageViewSerialOrOffset
-           << ", " << infoDesc.imageLayoutOrRange << ", " << infoDesc.imageSubresourceRange << "}";
+        os << "{" << infoDesc.samplerOrBufferSerialOrStorageFormat << ", "
+           << infoDesc.imageViewSerialOrOffset << ", " << infoDesc.imageLayoutOrRange << ", "
+           << infoDesc.imageSubresourceRange << "}";
     }
     return os;
 }
@@ -6259,8 +6280,8 @@ void DescriptorSetDescBuilder::updateUniformBuffer(uint32_t bindingIndex,
     uint32_t infoIndex           = writeDescriptorDescs[bindingIndex].descriptorInfoIndex;
     DescriptorInfoDesc &infoDesc = mDesc.getInfoDesc(infoIndex);
 
-    infoDesc.samplerOrBufferSerial   = bufferHelper.getBlockSerial().getValue();
-    infoDesc.imageViewSerialOrOffset = 0;
+    infoDesc.samplerOrBufferSerialOrStorageFormat = bufferHelper.getBlockSerial().getValue();
+    infoDesc.imageViewSerialOrOffset              = 0;
     SetBitField(infoDesc.imageLayoutOrRange, bufferRange);
     infoDesc.imageSubresourceRange = 0;
 
@@ -6286,8 +6307,8 @@ void DescriptorSetDescBuilder::updateTransformFeedbackBuffer(
     VkDeviceSize adjustedRange = bufferRange + (bufferOffset - alignedOffset);
 
     uint32_t infoIndex = writeDescriptorDescs[baseBinding].descriptorInfoIndex + xfbBufferIndex;
-    DescriptorInfoDesc &infoDesc   = mDesc.getInfoDesc(infoIndex);
-    infoDesc.samplerOrBufferSerial = bufferHelper.getBufferSerial().getValue();
+    DescriptorInfoDesc &infoDesc                  = mDesc.getInfoDesc(infoIndex);
+    infoDesc.samplerOrBufferSerialOrStorageFormat = bufferHelper.getBufferSerial().getValue();
     SetBitField(infoDesc.imageViewSerialOrOffset, alignedOffset);
     SetBitField(infoDesc.imageLayoutOrRange, adjustedRange);
     infoDesc.imageSubresourceRange = 0;
@@ -6386,8 +6407,8 @@ void DescriptorSetDescBuilder::updatePreCacheActiveTextures(
                     textureVk->getBufferViewSerial();
                 infoDesc.imageViewSerialOrOffset = imageViewSerial.viewSerial.getValue();
                 infoDesc.imageLayoutOrRange      = 0;
-                infoDesc.samplerOrBufferSerial   = 0;
-                infoDesc.imageSubresourceRange   = 0;
+                infoDesc.samplerOrBufferSerialOrStorageFormat = 0;
+                infoDesc.imageSubresourceRange                = 0;
             }
             else
             {
@@ -6407,7 +6428,8 @@ void DescriptorSetDescBuilder::updatePreCacheActiveTextures(
                 VkImageLayout imageLayout = textureVk->getImage().getCurrentLayout(renderer);
                 SetBitField(infoDesc.imageLayoutOrRange, imageLayout);
                 infoDesc.imageViewSerialOrOffset = imageViewSerial.viewSerial.getValue();
-                infoDesc.samplerOrBufferSerial   = samplerHelper.getSamplerSerial().getValue();
+                infoDesc.samplerOrBufferSerialOrStorageFormat =
+                    samplerHelper.getSamplerSerial().getValue();
                 memcpy(&infoDesc.imageSubresourceRange, &imageViewSerial.subresource,
                        sizeof(uint32_t));
             }
@@ -6421,8 +6443,8 @@ void DescriptorSetDescBuilder::setEmptyBuffer(uint32_t infoDescIndex,
 {
     DescriptorInfoDesc &emptyDesc = mDesc.getInfoDesc(infoDescIndex);
     SetBitField(emptyDesc.imageLayoutOrRange, emptyBuffer.getSize());
-    emptyDesc.imageViewSerialOrOffset = 0;
-    emptyDesc.samplerOrBufferSerial   = emptyBuffer.getBlockSerial().getValue();
+    emptyDesc.imageViewSerialOrOffset              = 0;
+    emptyDesc.samplerOrBufferSerialOrStorageFormat = emptyBuffer.getBlockSerial().getValue();
 
     mHandles[infoDescIndex].buffer = emptyBuffer.getBuffer().getHandle();
 
@@ -6457,8 +6479,8 @@ void DescriptorSetDescBuilder::updateOneShaderBuffer(
     BufferHelper &bufferHelper = bufferVk->getBuffer();
     VkDeviceSize offset        = bufferBinding.getOffset() + bufferHelper.getOffset();
 
-    DescriptorInfoDesc &infoDesc   = mDesc.getInfoDesc(infoDescIndex);
-    infoDesc.samplerOrBufferSerial = bufferHelper.getBlockSerial().getValue();
+    DescriptorInfoDesc &infoDesc                  = mDesc.getInfoDesc(infoDescIndex);
+    infoDesc.samplerOrBufferSerialOrStorageFormat = bufferHelper.getBlockSerial().getValue();
     if (IsDynamicDescriptor(descriptorType))
     {
         SetBitField(mDynamicOffsets[infoDescIndex], offset);
@@ -6517,7 +6539,8 @@ void DescriptorSetDescBuilder::updateOneUniformBufferOffset(
 
     DescriptorInfoDesc &infoDesc = mDesc.getInfoDesc(infoDescIndex);
     BufferHelper &bufferHelper   = vk::GetImpl(bufferBinding.get())->getBuffer();
-    ASSERT(infoDesc.samplerOrBufferSerial == bufferHelper.getBlockSerial().getValue());
+    ASSERT(infoDesc.samplerOrBufferSerialOrStorageFormat ==
+           bufferHelper.getBlockSerial().getValue());
     // Reachable only by program executables with dynamic descriptor type
     ASSERT(infoDesc.imageViewSerialOrOffset == 0);
 
@@ -6675,8 +6698,8 @@ void DescriptorSetDescBuilder::updateAtomicCounters(
         DescriptorInfoDesc &infoDesc = mDesc.getInfoDesc(infoIndex);
         SetBitField(infoDesc.imageLayoutOrRange, range);
         SetBitField(infoDesc.imageViewSerialOrOffset, offset);
-        infoDesc.samplerOrBufferSerial = bufferHelper.getBlockSerial().getValue();
-        infoDesc.imageSubresourceRange = 0;
+        infoDesc.samplerOrBufferSerialOrStorageFormat = bufferHelper.getBlockSerial().getValue();
+        infoDesc.imageSubresourceRange                = 0;
 
         mHandles[infoIndex].buffer = bufferHelper.getBuffer().getHandle();
     }
@@ -6731,6 +6754,10 @@ angle::Result DescriptorSetDescBuilder::updateImages(
             {
                 GLuint imageUnit     = imageBinding.boundImageUnits[arrayElement];
                 TextureVk *textureVk = activeImages[imageUnit];
+                if (!textureVk)
+                {
+                    continue;
+                }
 
                 uint32_t infoIndex = writeDescriptorDescs[info.binding].descriptorInfoIndex +
                                      arrayElement + imageUniform.getOuterArrayOffset();
@@ -6743,11 +6770,11 @@ angle::Result DescriptorSetDescBuilder::updateImages(
                 DescriptorInfoDesc &infoDesc = mDesc.getInfoDesc(infoIndex);
                 infoDesc.imageViewSerialOrOffset =
                     textureVk->getBufferViewSerial().viewSerial.getValue();
-                infoDesc.imageLayoutOrRange    = 0;
+                infoDesc.imageLayoutOrRange = 0;
                 // special handling for texture buffer to store the VK format here.
                 infoDesc.imageSubresourceRange = static_cast<uint32_t>(viewFormat);
 
-                infoDesc.samplerOrBufferSerial = 0;
+                infoDesc.samplerOrBufferSerialOrStorageFormat = 0;
 
                 mHandles[infoIndex].bufferView = view->getHandle();
             }
@@ -6759,6 +6786,10 @@ angle::Result DescriptorSetDescBuilder::updateImages(
                 GLuint imageUnit             = imageBinding.boundImageUnits[arrayElement];
                 const gl::ImageUnit &binding = imageUnits[imageUnit];
                 TextureVk *textureVk         = activeImages[imageUnit];
+                if (!textureVk)
+                {
+                    continue;
+                }
 
                 vk::ImageHelper *image         = &textureVk->getImage();
                 const vk::ImageView *imageView = nullptr;
@@ -6777,7 +6808,9 @@ angle::Result DescriptorSetDescBuilder::updateImages(
                 SetBitField(infoDesc.imageLayoutOrRange, image->getCurrentLayout(renderer));
                 memcpy(&infoDesc.imageSubresourceRange, &serial.subresource, sizeof(uint32_t));
                 infoDesc.imageViewSerialOrOffset = serial.viewSerial.getValue();
-                infoDesc.samplerOrBufferSerial   = 0;
+                // special handling for storage images to store binding format here.
+                infoDesc.samplerOrBufferSerialOrStorageFormat =
+                    static_cast<uint32_t>(binding.format);
 
                 mHandles[infoIndex].imageView = imageView->getHandle();
             }
@@ -6897,7 +6930,7 @@ void DescriptorSetDescBuilder::updateInputAttachment(
     SetBitField(infoDesc.imageLayoutOrRange, layout);
     infoDesc.imageViewSerialOrOffset = serial.viewSerial.getValue();
     memcpy(&infoDesc.imageSubresourceRange, &serial.subresource, sizeof(uint32_t));
-    infoDesc.samplerOrBufferSerial = 0;
+    infoDesc.samplerOrBufferSerialOrStorageFormat = 0;
 
     mHandles[infoIndex].imageView = imageView->getHandle();
 }
@@ -6979,7 +7012,7 @@ void SharedCacheKeyManager<SharedCacheKeyT>::releaseKeys(ContextVk *contextVk)
     {
         if (sharedCacheKey->valid())
         {
-            // Immediate destroy the cached object and the key itself when first releaseRef call is
+            // Immediate destroy the cached object and the key itself when first releaseKeys call is
             // made
             sharedCacheKey->releaseCachedObject(contextVk);
         }
@@ -7046,7 +7079,7 @@ bool SharedCacheKeyManager<SharedCacheKeyT>::containsKeyWithOwnerEqual(
 }
 
 template <class SharedCacheKeyT>
-void SharedCacheKeyManager<SharedCacheKeyT>::assertAllEntriesDestroyed() const
+ANGLE_INLINE void SharedCacheKeyManager<SharedCacheKeyT>::assertAllEntriesDestroyed() const
 {
     // Caller must have already freed all caches
     for (const SharedCacheKeyT &sharedCacheKey : mSharedCacheKeys)
@@ -7324,9 +7357,10 @@ void UpdateDescriptorSetsBuilder::updateWriteDescriptorSet(
                 writeSet.pBufferInfo = writeBuffers;
                 break;
             }
-            case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+            // VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE is not possible.
+            // VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER is handled exclusively by
+            // |UpdateFullTexturesDescriptorSet|.
             case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
-            case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
             case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
             {
                 VkDescriptorImageInfo *writeImages =
@@ -7340,7 +7374,6 @@ void UpdateDescriptorSetsBuilder::updateWriteDescriptorSet(
 
                     imageInfo.imageLayout = static_cast<VkImageLayout>(infoDesc.imageLayoutOrRange);
                     imageInfo.imageView   = handles[infoDescIndex + arrayElement].imageView;
-                    imageInfo.sampler     = handles[infoDescIndex + arrayElement].sampler;
                 }
                 writeSet.pImageInfo = writeImages;
                 break;
@@ -8021,6 +8054,13 @@ angle::Result RenderPassCache::MakeRenderPass(vk::ErrorContext *context,
     {
         createInfo.dependencyCount = static_cast<uint32_t>(subpassDependencies.size());
         createInfo.pDependencies   = subpassDependencies.data();
+    }
+
+    if (desc.viewCount() && desc.isRenderToTexture())
+    {
+        // GL_OVR_multiview_multisampled_render_to_texture is only implemented
+        // through the VK_EXT_multisampled_render_to_single_sampled extension, and not emulated.
+        ASSERT(isRenderToTextureThroughExtension);
     }
 
     const uint32_t viewMask = angle::BitMask<uint32_t>(desc.viewCount());

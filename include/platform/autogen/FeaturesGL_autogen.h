@@ -218,6 +218,12 @@ struct FeaturesGL : FeatureSetBase
         &members,
     };
 
+    FeatureInfo disableMSAASampleCount1 = {
+        "disableMSAASampleCount1",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
     FeatureInfo allowClearForRobustResourceInit = {
         "allowClearForRobustResourceInit",
         FeatureCategory::OpenGLWorkarounds,
@@ -346,6 +352,12 @@ struct FeaturesGL : FeatureSetBase
 
     FeatureInfo emulateCopyTexImage2DFromRenderbuffers = {
         "emulateCopyTexImage2DFromRenderbuffers",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo forceLumaWorkaroundForSameTextureCopyTexImage2D = {
+        "forceLumaWorkaroundForSameTextureCopyTexImage2D",
         FeatureCategory::OpenGLWorkarounds,
         &members,
     };
@@ -590,6 +602,12 @@ struct FeaturesGL : FeatureSetBase
         &members,
     };
 
+    FeatureInfo emitMaxGlsl400ForTesting = {
+        "emitMaxGlsl400ForTesting",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
     FeatureInfo useIntermediateTextureForGenerateMipmap = {
         "useIntermediateTextureForGenerateMipmap",
         FeatureCategory::OpenGLWorkarounds,
@@ -628,6 +646,42 @@ struct FeaturesGL : FeatureSetBase
 
     FeatureInfo resetSampleCoverageOnFBOChange = {
         "resetSampleCoverageOnFBOChange",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo disablePassthroughShaders = {
+        "disablePassthroughShaders",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo disableClearTexImageForRobustInit = {
+        "disableClearTexImageForRobustInit",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo multiviewViaViewportArray = {
+        "multiviewViaViewportArray",
+        FeatureCategory::OpenGLFeatures,
+        &members,
+    };
+
+    FeatureInfo validateMaxPerStageUniformBlocksAtCompileTime = {
+        "validateMaxPerStageUniformBlocksAtCompileTime",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo recreateMipmapLevelsBeforeGenerate = {
+        "recreateMipmapLevelsBeforeGenerate",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo limitMaxBufferSizeTo1gb = {
+        "limitMaxBufferSizeTo1gb",
         FeatureCategory::OpenGLWorkarounds,
         &members,
     };

@@ -216,9 +216,14 @@ bool UpdateIndexedBufferBinding(const Context *context,
         ASSERT(!isBindingDirty);
         isBindingDirty = binding->get() != buffer || binding->getOffset() != offset ||
                          binding->getSize() != size;
-        if (isBindingDirty)
+        // If buffer changed, update everything otherwise update just the offset and size
+        if (binding->get() != buffer)
         {
             binding->set(context, buffer, offset, size);
+        }
+        else if (buffer != nullptr)
+        {
+            binding->assignOffsetAndSize(offset, size);
         }
     }
 
@@ -361,6 +366,7 @@ PrivateState::PrivateState(const Version &clientVersion,
       mFragmentShaderDerivativeHint(GL_NONE),
       mNearZ(0),
       mFarZ(0),
+      mGroupMarkerCount(0),
       mProvokingVertex(gl::ProvokingVertexConvention::LastVertexConvention),
       mActiveSampler(0),
       mPrimitiveRestart(false),
@@ -397,7 +403,8 @@ PrivateState::PrivateState(const Version &clientVersion,
       mRobustResourceInit(robustResourceInit),
       mProgramBinaryCacheEnabled(programBinaryCacheEnabled),
       mVertexArrayPrivate(nullptr),
-      mDebug(debug)
+      mDebug(debug),
+      mVertexArrayHandleAllocator(IMPLEMENTATION_MAX_OBJECT_HANDLES)
 {}
 
 PrivateState::~PrivateState() = default;
@@ -3686,10 +3693,11 @@ void State::getPointerv(const Context *context, GLenum pname, void **params) con
         case GL_COLOR_ARRAY_POINTER:
         case GL_TEXTURE_COORD_ARRAY_POINTER:
         case GL_POINT_SIZE_ARRAY_POINTER_OES:
-            QueryVertexAttribPointerv(getVertexArray()->getVertexAttribute(
-                                          context->vertexArrayIndex(ParamToVertexArrayType(pname))),
-                                      GL_VERTEX_ATTRIB_ARRAY_POINTER, params);
-            return;
+        {
+            const int index = context->vertexArrayIndex(ParamToVertexArrayType(pname));
+            *params = const_cast<void *>(getVertexArray()->getVertexAttribute(index).pointer);
+            break;
+        }
         case GL_BLOB_CACHE_GET_FUNCTION_ANGLE:
             *params = reinterpret_cast<void *>(getBlobCacheCallbacks().getFunction);
             break;
@@ -3705,7 +3713,7 @@ void State::getPointerv(const Context *context, GLenum pname, void **params) con
     }
 }
 
-void State::getIntegeri_v(const Context *context, GLenum target, GLuint index, GLint *data) const
+void State::getIntegeri_v(GLenum target, GLuint index, GLint *data) const
 {
     switch (target)
     {

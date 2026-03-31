@@ -12,6 +12,7 @@
 
 import difflib
 import os
+import re
 import sys
 import xml.etree.ElementTree as etree
 
@@ -36,12 +37,8 @@ xml_inputs = sorted(khronos_xml_inputs + angle_xml_inputs)
 # Notes on categories of extensions:
 # 'Requestable' extensions are extensions that can be enabled with ANGLE_request_extension
 # 'ES-Only' extensions are always implicitly enabled.
-# 'Toggleable' extensions are like 'Requestable' except they can be also disabled.
 # 'ANGLE' extensions are extensions that are not yet officially upstreamed to Khronos.
 # We document those extensions in gl_angle_ext.xml instead of the canonical gl.xml.
-
-angle_toggleable_extensions = [
-]
 
 angle_requestable_extensions = [
     "GL_ANGLE_base_vertex_base_instance",
@@ -145,8 +142,10 @@ gles_requestable_extensions = [
     "GL_EXT_shader_io_blocks",
     "GL_EXT_shader_non_constant_global_initializers",
     "GL_EXT_shader_texture_lod",
+    "GL_EXT_shader_texture_samples",
     "GL_EXT_shadow_samplers",
     "GL_EXT_sRGB",
+    "GL_EXT_sRGB_write_control",
     "GL_EXT_tessellation_shader",
     "GL_EXT_texture_border_clamp",
     "GL_EXT_texture_buffer",
@@ -161,11 +160,13 @@ gles_requestable_extensions = [
     "GL_EXT_texture_filter_anisotropic",
     "GL_EXT_texture_filter_minmax",
     "GL_EXT_texture_format_BGRA8888",
+    "GL_EXT_texture_format_sRGB_override",
     "GL_EXT_texture_mirror_clamp_to_edge",
     "GL_EXT_texture_norm16",
     "GL_EXT_texture_query_lod",
     "GL_EXT_texture_rg",
     "GL_EXT_texture_shadow_lod",
+    "GL_EXT_texture_sRGB_decode",
     "GL_EXT_texture_sRGB_R8",
     "GL_EXT_texture_sRGB_RG8",
     "GL_EXT_texture_storage",
@@ -244,6 +245,7 @@ gles_requestable_extensions = [
     "GL_OES_vertex_type_10_10_10_2",
     "GL_OVR_multiview",
     "GL_OVR_multiview2",
+    "GL_OVR_multiview_multisampled_render_to_texture",
     "GL_QCOM_framebuffer_foveated",
     "GL_QCOM_render_shared_exponent",
     "GL_QCOM_shading_rate",
@@ -282,9 +284,6 @@ gles_es_only_extensions = [
     "GL_EXT_discard_framebuffer",
     "GL_EXT_multisample_compatibility",
     "GL_EXT_robustness",
-    "GL_EXT_sRGB_write_control",
-    "GL_EXT_texture_format_sRGB_override",
-    "GL_EXT_texture_sRGB_decode",
     "GL_KHR_debug",
     "GL_KHR_no_error",
     "GL_KHR_robust_buffer_access_behavior",
@@ -340,14 +339,13 @@ def check_sorted(name, l):
     assert not diff_lines, '\n\nPlease sort "%s":\n%s' % (name, '\n'.join(diff_lines))
 
 
-angle_extensions = angle_requestable_extensions + angle_es_only_extensions + angle_toggleable_extensions
+angle_extensions = angle_requestable_extensions + angle_es_only_extensions
 gles_extensions = gles_requestable_extensions + gles_es_only_extensions
 supported_extensions = sorted(angle_extensions + gles1_extensions + gles_extensions)
 
 assert len(supported_extensions) == len(set(supported_extensions)), 'Duplicates in extension list'
 check_sorted('angle_requestable_extensions', angle_requestable_extensions)
 check_sorted('angle_es_only_extensions', angle_es_only_extensions)
-check_sorted('angle_toggleable_extensions', angle_toggleable_extensions)
 check_sorted('gles_requestable_extensions', gles_requestable_extensions)
 check_sorted('gles_es_only_extensions', gles_es_only_extensions)
 check_sorted('gles_extensions', gles1_extensions)
@@ -427,6 +425,9 @@ supported_egl_extensions = [
 check_sorted('supported_egl_extensions', supported_egl_extensions)
 
 supported_cl_extensions = [
+    # OpenCL 1.0
+    "cl_arm_import_memory",
+
     # Since OpenCL 1.1
     "cl_khr_byte_addressable_store",
     "cl_khr_global_int32_base_atomics",
@@ -449,6 +450,7 @@ supported_cl_extensions = [
     "cl_khr_int64_base_atomics",
     "cl_khr_int64_extended_atomics",
     "cl_khr_priority_hints",
+    "cl_khr_subgroups",
 ]
 
 # Strip these suffixes from Context entry point names. NV is excluded (for now).
@@ -491,7 +493,7 @@ class apis:
     CL = 'CL'
 
 # For GLenum types
-api_enums = {apis.GL: 'BigGLEnum', apis.GLES: 'GLESEnum'}
+api_enums = {apis.GLES: 'GLESEnum'}
 default_enum_group_name = 'AllEnums'
 
 
@@ -555,6 +557,7 @@ class RegistryXML:
         self.all_cmd_names = CommandNames()
         self.commands = {}
         self.sources_by_command = {}
+        self.sources_by_command_no_suffix = {}
 
     def _AppendANGLEExts(self, ext_file):
         angle_ext_tree = etree.parse(script_relative(ext_file))
@@ -583,6 +586,7 @@ class RegistryXML:
         # Reverse cache for all places a command may be defined in.
         for cmd in commands:
             self.sources_by_command.setdefault(cmd, []).append(annotation)
+            self.sources_by_command_no_suffix.setdefault(cmd, []).append(annotation)
 
         # Remove commands that have already been processed
         current_cmds = self.all_cmd_names.get_all_commands()
@@ -619,11 +623,16 @@ class RegistryXML:
         self.ext_data = {}
         self.ext_dupes = {}
         ext_annotations = {}
+        ext_prefixes = set()
 
         for extension in self.root.findall("extensions/extension"):
             extension_name = extension.attrib['name']
             if not extension_name in supported_extensions:
                 continue
+
+            # Extract the extension prefix
+            if (extension_name.startswith("GL_")):
+                ext_prefixes.add(re.match(r"^GL_([A-Z]+)_", extension_name).group(1))
 
             ext_annotations[extension_name] = self._ClassifySupport(extension)
 
@@ -650,6 +659,12 @@ class RegistryXML:
             # Reverse cache for all places a command may be defined in.
             for cmd in ext_cmd_names:
                 self.sources_by_command.setdefault(cmd, []).append(extension_name)
+
+                for prefix in ext_prefixes:
+                    if cmd.endswith(prefix):
+                        self.sources_by_command_no_suffix.setdefault(cmd[:-len(prefix)],
+                                                                     []).append(extension_name)
+                        break
 
             # Detect and filter duplicate extensions.
             dupes = []

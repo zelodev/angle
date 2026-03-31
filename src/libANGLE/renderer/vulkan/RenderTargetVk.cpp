@@ -52,6 +52,10 @@ void RenderTargetVk::init(vk::ImageHelper *image,
                           uint32_t layerCount,
                           RenderTargetTransience transience)
 {
+    // If this comes from SurfaceVk, the usage bit will be 0 (image init are deferred).
+    ASSERT(image->getUsage() == 0 ||
+           (image->getUsage() & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) != 0);
     mImage              = image;
     mImageViews         = imageViews;
     mResolveImage       = resolveImage;
@@ -206,7 +210,7 @@ angle::Result RenderTargetVk::getImageViewWithColorspace(ContextVk *contextVk,
                                                          const vk::ImageView **imageViewOut) const
 {
     ASSERT(mImage);
-    mImageViews->updateSrgbWiteControlMode(*mImage, mode);
+    mImageViews->updateSrgbWriteControlMode(*mImage, mode);
     return getImageViewImpl(contextVk, *mImage, mImageViews, imageViewOut);
 }
 

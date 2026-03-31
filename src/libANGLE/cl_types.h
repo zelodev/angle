@@ -79,8 +79,21 @@ using EventStatusMap = std::array<T, 3>;
 
 using Extents = angle::Extents<size_t>;
 constexpr Extents kExtentsZero(0, 0, 0);
-using Offset  = angle::Offset<size_t>;
+using Offset = angle::Offset<size_t>;
 constexpr Offset kOffsetZero(0, 0, 0);
+
+using ChannelMapping = std::array<uint32_t, 4>;
+union PixelColor
+{
+    uint8_t u8[4];
+    int8_t s8[4];
+    uint16_t u16[4];
+    int16_t s16[4];
+    uint32_t u32[4];
+    int32_t s32[4];
+    cl_half fp16[4];
+    cl_float fp32[4];
+};
 
 struct KernelArg
 {
@@ -225,6 +238,15 @@ struct ImageDescriptor
             arraySize = 1;
         }
     }
+
+    bool operator==(const ImageDescriptor &other) const
+    {
+        return (type == other.type && width == other.width && height == other.height &&
+                depth == other.depth && arraySize == other.arraySize &&
+                rowPitch == other.rowPitch && slicePitch == other.slicePitch &&
+                numMipLevels == other.numMipLevels && numSamples == other.numSamples);
+    }
+    bool operator!=(const ImageDescriptor &other) const { return !(*this == other); }
 };
 
 struct NDRange
@@ -358,11 +380,11 @@ struct NDRange
     bool nullLocalWorkSize{false};
 };
 
-// Memory property element from cl_khr_external_memory
+// name-value pair for cl_properties lists
 struct NameValueProperty
 {
-    intptr_t name;
-    intptr_t value;
+    cl_properties name;
+    cl_properties value;
 };
 
 // this Defer class provides the user with a closure that executes on its destruction

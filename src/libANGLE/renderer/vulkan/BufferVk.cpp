@@ -669,7 +669,7 @@ angle::Result BufferVk::handleDeviceLocalBufferMap(ContextVk *contextVk,
     VkBufferCopy copyRegion = {mBuffer.getOffset() + offset, mStagingBuffer.getOffset(), size};
     ANGLE_TRY(CopyBuffers(contextVk, &mBuffer, &mStagingBuffer, 1, &copyRegion));
     ANGLE_TRY(mStagingBuffer.waitForIdle(contextVk, "GPU stall due to mapping device local buffer",
-                                         RenderPassClosureReason::DeviceLocalBufferMap));
+                                         QueueSubmitReason::DeviceLocalBufferMap));
     // Since coherent is prefer, we may end up getting non-coherent. Always call invalidate here (it
     // will check memory flag before it actually calls into driver).
     ANGLE_TRY(mStagingBuffer.invalidate(renderer));
@@ -817,8 +817,8 @@ angle::Result BufferVk::mapRangeImpl(ContextVk *contextVk,
             // If there are unflushed write commands for the resource, flush them.
             if (contextVk->hasUnsubmittedUse(mBuffer.getWriteResourceUse()))
             {
-                ANGLE_TRY(contextVk->flushAndSubmitCommands(
-                    nullptr, nullptr, RenderPassClosureReason::BufferWriteThenMap));
+                ANGLE_TRY(contextVk->flushAndSubmitCommands(nullptr, nullptr,
+                                                            QueueSubmitReason::BufferWriteThenMap));
             }
             ANGLE_TRY(renderer->finishResourceUse(contextVk, mBuffer.getWriteResourceUse()));
         }
@@ -877,7 +877,7 @@ angle::Result BufferVk::mapRangeImpl(ContextVk *contextVk,
 
     // Write case (worst case, buffer in use for write)
     ANGLE_TRY(mBuffer.waitForIdle(contextVk, "GPU stall due to mapping buffer in use by the GPU",
-                                  RenderPassClosureReason::BufferInUseWhenSynchronizedMap));
+                                  QueueSubmitReason::BufferInUseWhenSynchronizedMap));
     return mapHostVisibleBuffer(contextVk, offset, access, mapPtrBytes);
 }
 
@@ -989,10 +989,15 @@ angle::Result BufferVk::updateBuffer(ContextVk *contextVk,
 {
     // To copy on the CPU, destination must be host-visible.  The source should also be either a CPU
     // pointer or other a host-visible buffer that is not being written to by the GPU.
+    // 1. For glBufferData and glBufferSubData, the source is a CPU pointer.
+    // 2. For glCopyBufferSubData, the source is not a CPU pointer. shouldCopyOnCPU depends on
+    //    whether the source buffer is host-visible and not being written by the GPU, together with
+    //    the value of preferGPUForCopyBufferSubData.
     const bool shouldCopyOnCPU =
         mBuffer.isHostVisible() &&
         (dataSource.data != nullptr ||
-         ShouldUseCPUToCopyData(contextVk, *dataSource.buffer, updateSize, bufferSize));
+         (ShouldUseCPUToCopyData(contextVk, *dataSource.buffer, updateSize, bufferSize) &&
+          !contextVk->getRenderer()->getFeatures().preferGPUForCopyBufferSubData.enabled));
 
     if (shouldCopyOnCPU)
     {
@@ -1404,10 +1409,8 @@ bool BufferVk::shouldRedefineStorage(vk::Renderer *renderer,
     }
     else
     {
-        size_t paddedBufferSize =
-            (renderer->getFeatures().padBuffersToMaxVertexAttribStride.enabled)
-                ? (size + static_cast<size_t>(renderer->getMaxVertexAttribStride()))
-                : size;
+        const size_t paddedBufferSize =
+            static_cast<size_t>(renderer->padVertexAttribBufferSizeIfNeeded(size));
         size_t sizeInBytes = roundUpPow2(paddedBufferSize, kBufferSizeGranularity);
         size_t alignedSize = roundUp(sizeInBytes, renderer->getDefaultBufferAlignment());
         if (alignedSize > mBuffer.getSize())

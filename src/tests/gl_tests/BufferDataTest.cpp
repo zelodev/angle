@@ -1966,6 +1966,40 @@ TEST_P(BufferStorageTestES3, VertexBufferMapped)
     EXPECT_GL_NO_ERROR();
 }
 
+// Verify that glReadPixels works with a persistently mapped buffer.
+TEST_P(BufferStorageTestES3, ReadPixelsPersistentBuffer)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_buffer_storage"));
+
+    GLBuffer buffer;
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, buffer);
+    glBufferStorageEXT(GL_PIXEL_PACK_BUFFER, 4, nullptr,
+                       GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT);
+    ASSERT_GL_NO_ERROR();
+
+    void *mapPtr =
+        glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, 4,
+                         GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT);
+    ASSERT_NE(nullptr, mapPtr);
+    ASSERT_GL_NO_ERROR();
+
+    glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    ASSERT_GL_NO_ERROR();
+
+    glFinish();
+
+    GLColor actual;
+    memcpy(&actual, mapPtr, sizeof(actual));
+
+    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    EXPECT_EQ(GLColor::green, actual);
+}
+
 void TestPageSharingBuffers(std::function<void(void)> swapCallback,
                             size_t bufferSize,
                             const std::array<Vector3, 6> &quadVertices,
@@ -2379,6 +2413,33 @@ TEST_P(BufferStorageTestES3, BufferStorageGetParameter)
     glBindBuffer(GL_COPY_READ_BUFFER, 0);
 }
 
+class BufferDataTest1gbLimit : public BufferDataTest
+{};
+
+// Allocating >1gb should generate an INVALID_OPERATION when LimitMaxBufferSizeTo1gb is enabled.
+TEST_P(BufferDataTest1gbLimit, ErrorGeneratedOnLargeAllocation)
+{
+    GLBuffer buffer;
+    glBindBuffer(GL_ARRAY_BUFFER, buffer);
+    EXPECT_GL_NO_ERROR();
+
+    // First make sure a small allocation works
+    glBufferData(GL_ARRAY_BUFFER, (1 << 10) + 1, nullptr, GL_STATIC_DRAW);
+    EXPECT_GL_NO_ERROR();
+
+    // >1gb should fail.
+    glBufferData(GL_ARRAY_BUFFER, (1 << 30) + 1, nullptr, GL_STATIC_DRAW);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
+    // glCopyBufferSubData can't be tested because a source buffer > 1gb cannot be created.
+
+    if (EnsureGLExtensionEnabled("GL_EXT_buffer_storage"))
+    {
+        glBufferStorageEXT(GL_ARRAY_BUFFER, (1 << 30) + 1, nullptr, 0);
+        EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    }
+}
+
 ANGLE_INSTANTIATE_TEST_ES2(BufferDataTest);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(BufferSubDataTest);
@@ -2403,6 +2464,10 @@ ANGLE_INSTANTIATE_TEST_ES3(IndexedBufferCopyTest);
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(BufferStorageTestES3Threaded);
 ANGLE_INSTANTIATE_TEST_ES3(BufferStorageTestES3Threaded);
 
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(BufferDataTest1gbLimit);
+ANGLE_INSTANTIATE_TEST(BufferDataTest1gbLimit,
+                       ES2_OPENGL().enable(Feature::LimitMaxBufferSizeTo1gb),
+                       ES3_OPENGL().enable(Feature::LimitMaxBufferSizeTo1gb));
 #ifdef _WIN64
 
 // Test a bug where an integer overflow bug could trigger a crash in D3D.

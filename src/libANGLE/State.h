@@ -141,8 +141,8 @@ enum DirtyBitType
     DIRTY_BIT_TEXTURE_BINDINGS,
     DIRTY_BIT_IMAGE_BINDINGS,
     DIRTY_BIT_TRANSFORM_FEEDBACK_BINDING,
-    DIRTY_BIT_SHADER_STORAGE_BUFFER_BINDING,
     DIRTY_BIT_ATOMIC_COUNTER_BUFFER_BINDING,
+    DIRTY_BIT_SHADER_STORAGE_BUFFER_BINDING,
     // Top-level dirty bit. Also see mUniformBufferBlocksDirtyTypeMask.
     DIRTY_BIT_UNIFORM_BUFFER_BINDINGS,
     DIRTY_BIT_MULTISAMPLING,
@@ -628,11 +628,14 @@ class PrivateState : angle::NonCopyable
     void setPerfMonitorActive(bool active) { mIsPerfMonitorActive = active; }
     bool isPerfMonitorActive() const { return mIsPerfMonitorActive; }
 
-    VertexArrayID allocateVertexID()
+    bool allocateVertexID(VertexArrayID *outId)
     {
-        VertexArrayID vertexArray = {mVertexArrayHandleAllocator.allocate()};
-        mVertexArrayMap.assign(vertexArray, nullptr);
-        return vertexArray;
+        if (!mVertexArrayHandleAllocator.allocate(&outId->value))
+        {
+            return false;
+        }
+        mVertexArrayMap.assign(*outId, nullptr);
+        return true;
     }
     bool isVertexArrayGenerated(VertexArrayID vertexArray) const
     {
@@ -668,6 +671,10 @@ class PrivateState : angle::NonCopyable
                                bool normalized,
                                bool pureInteger,
                                GLuint relativeOffset);
+
+    GLuint getGroupMarkerCount() const { return mGroupMarkerCount; }
+    void incrementGroupMarkers() { mGroupMarkerCount++; }
+    void decrementGroupMarkers() { mGroupMarkerCount--; }
 
   private:
     bool hasConstantColor(GLenum sourceRGB, GLenum destRGB) const;
@@ -720,6 +727,10 @@ class PrivateState : angle::NonCopyable
 
     ClipOrigin mClipOrigin;
     ClipDepthMode mClipDepthMode;
+
+    // GL_EXT_debug_marker
+    // Keeps track of debug group marker count. Pop calls are ignored if there is no marker to pop.
+    GLuint mGroupMarkerCount;
 
     // GL_ANGLE_provoking_vertex
     ProvokingVertexConvention mProvokingVertex;
@@ -883,6 +894,10 @@ class State : angle::NonCopyable
     TextureCapsMap *getMutableTextureCaps() { return mPrivateState.getMutableTextureCaps(); }
     Extensions *getMutableExtensions() { return mPrivateState.getMutableExtensions(); }
     Limitations *getMutableLimitations() { return mPrivateState.getMutableLimitations(); }
+
+    GLuint getGroupMarkerCount() const { return mPrivateState.getGroupMarkerCount(); }
+    void incrementGroupMarkers() { mPrivateState.incrementGroupMarkers(); }
+    void decrementGroupMarkers() { mPrivateState.decrementGroupMarkers(); }
 
     const TextureCaps &getTextureCap(GLenum internalFormat) const
     {
@@ -1139,7 +1154,7 @@ class State : angle::NonCopyable
     void getFloatv(GLenum pname, GLfloat *params) const { mPrivateState.getFloatv(pname, params); }
     angle::Result getIntegerv(const Context *context, GLenum pname, GLint *params) const;
     void getPointerv(const Context *context, GLenum pname, void **params) const;
-    void getIntegeri_v(const Context *context, GLenum target, GLuint index, GLint *data) const;
+    void getIntegeri_v(GLenum target, GLuint index, GLint *data) const;
     void getInteger64i_v(GLenum target, GLuint index, GLint64 *data) const;
     void getBooleani_v(GLenum target, GLuint index, GLboolean *data) const;
 

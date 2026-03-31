@@ -190,16 +190,20 @@ class Renderer : angle::NonCopyable
     {
         return mHostImageCopyProperties;
     }
-    const VkPhysicalDeviceFeatures &getPhysicalDeviceFeatures() const
-    {
-        return mPhysicalDeviceFeatures;
-    }
     const VkPhysicalDeviceShaderIntegerDotProductProperties &
     getPhysicalDeviceShaderIntegerDotProductProperties() const
     {
         return mShaderIntegerDotProductProperties;
     }
+    const VkPhysicalDeviceSubgroupProperties &getPhysicalDeviceSubgroupProperties() const
+    {
+        return mSubgroupProperties;
+    }
 
+    const VkPhysicalDeviceFeatures &getPhysicalDeviceFeatures() const
+    {
+        return mPhysicalDeviceFeatures;
+    }
     const VkPhysicalDeviceFeatures2KHR &getEnabledFeatures() const { return mEnabledFeatures; }
     VkDevice getDevice() const { return mDevice; }
 
@@ -257,7 +261,7 @@ class Renderer : angle::NonCopyable
 
     const angle::FeaturesVk &getFeatures() const { return mFeatures; }
     uint32_t getMaxVertexAttribDivisor() const { return mMaxVertexAttribDivisor; }
-    VkDeviceSize getMaxVertexAttribStride() const { return mMaxVertexAttribStride; }
+    VkDeviceSize padVertexAttribBufferSizeIfNeeded(VkDeviceSize bufferSize);
     uint32_t getMaxColorInputAttachmentCount() const { return mMaxColorInputAttachmentCount; }
     ANGLE_INLINE bool isInFlightCommandsEmpty() const
     {
@@ -429,18 +433,23 @@ class Renderer : angle::NonCopyable
     void cleanupPendingSubmissionGarbage();
 
     angle::Result submitCommands(vk::ErrorContext *context,
-                                 vk::ProtectionType protectionType,
-                                 egl::ContextPriority contextPriority,
                                  const vk::Semaphore *signalSemaphore,
                                  const vk::SharedExternalFence *externalFence,
-                                 std::vector<VkImageMemoryBarrier> &&imagesToTransitionToForeign,
-                                 const QueueSerial &submitQueueSerial);
+                                 const QueueSerial &submitQueueSerial,
+                                 CommandsState &&commandsState);
 
     angle::Result submitPriorityDependency(vk::ErrorContext *context,
                                            vk::ProtectionTypes protectionTypes,
                                            egl::ContextPriority srcContextPriority,
                                            egl::ContextPriority dstContextPriority,
                                            SerialIndex index);
+
+    angle::Result insertOneOffSubmitDebugMarker(vk::ErrorContext *context,
+                                                vk::ProtectionType protectionType,
+                                                egl::ContextPriority priority,
+                                                QueueSubmitReason reason);
+    void insertSubmitDebugMarkerInCommandBuffer(PrimaryCommandBuffer &commandBuffer,
+                                                QueueSubmitReason reason);
 
     void handleDeviceLost();
     angle::Result finishResourceUse(vk::ErrorContext *context, const vk::ResourceUse &use);
@@ -453,22 +462,6 @@ class Renderer : angle::NonCopyable
 
     angle::Result checkCompletedCommandsAndCleanup(vk::ErrorContext *context);
     angle::Result releaseFinishedCommands(vk::ErrorContext *context);
-
-    angle::Result flushWaitSemaphores(vk::ProtectionType protectionType,
-                                      egl::ContextPriority priority,
-                                      std::vector<VkSemaphore> &&waitSemaphores,
-                                      std::vector<VkPipelineStageFlags> &&waitSemaphoreStageMasks);
-    angle::Result flushRenderPassCommands(vk::Context *context,
-                                          vk::ProtectionType protectionType,
-                                          egl::ContextPriority priority,
-                                          const vk::RenderPass &renderPass,
-                                          VkFramebuffer framebufferOverride,
-                                          vk::RenderPassCommandBufferHelper **renderPassCommands);
-    angle::Result flushOutsideRPCommands(
-        vk::Context *context,
-        vk::ProtectionType protectionType,
-        egl::ContextPriority priority,
-        vk::OutsideRenderPassCommandBufferHelper **outsideRPCommands);
 
     VkResult queuePresent(vk::ErrorContext *context,
                           egl::ContextPriority priority,
@@ -486,6 +479,8 @@ class Renderer : angle::NonCopyable
     void recycleOutsideRenderPassCommandBufferHelper(
         vk::OutsideRenderPassCommandBufferHelper **commandBuffer);
     void recycleRenderPassCommandBufferHelper(vk::RenderPassCommandBufferHelper **commandBuffer);
+
+    CommandPoolAccess &getCommandPoolAccess() { return mCommandQueue.getCommandPoolAccess(); }
 
     // Process GPU memory reports
     void processMemoryReportCallback(const VkDeviceMemoryReportCallbackDataEXT &callbackData)
@@ -550,7 +545,8 @@ class Renderer : angle::NonCopyable
         return mEnabledDeviceExtensions;
     }
 
-    VkDeviceSize getPreferedBufferBlockSize(uint32_t memoryTypeIndex) const;
+    VkDeviceSize getPreferredInitialBufferBlockSize(uint32_t memoryTypeIndex) const;
+    VkDeviceSize getPreferredLargeBufferBlockSize(uint32_t memoryTypeIndex) const;
 
     size_t getDefaultBufferAlignment() const { return mDefaultBufferAlignment; }
 
@@ -559,6 +555,8 @@ class Renderer : angle::NonCopyable
         return mStagingBufferMemoryTypeIndex[coherency];
     }
     size_t getStagingBufferAlignment() const { return mStagingBufferAlignment; }
+
+    uint32_t getTileMemoyTypeIndex() const { return mTileMemoyTypeIndex; }
 
     uint32_t getVertexConversionBufferMemoryTypeIndex(MemoryHostVisibility hostVisibility) const
     {
@@ -665,10 +663,7 @@ class Renderer : angle::NonCopyable
 
     void requestAsyncCommandsAndGarbageCleanup(vk::ErrorContext *context);
 
-    VkDeviceSize getMaxMemoryAllocationSize() const
-    {
-        return mMaintenance3Properties.maxMemoryAllocationSize;
-    }
+    VkDeviceSize getMaxMemoryAllocationSize() const { return mMaxMemoryAllocationSize; }
 
     // Cleanup garbage and finish command batches from the queue if necessary in the event of an OOM
     // error.
@@ -717,15 +712,14 @@ class Renderer : angle::NonCopyable
     uint32_t getPreferredVectorWidthDouble() const { return mPreferredVectorWidthDouble; }
     uint32_t getPreferredVectorWidthHalf() const { return mPreferredVectorWidthHalf; }
 
-    bool isVertexAttributeInstanceRateZeroDivisorAllowed() const
+    angle::Result onFrameBoundary(const gl::Context *contextGL);
+
+    uint32_t getMinRenderPassWriteCommandCountToEarlySubmit() const
     {
-        return !mFeatures.supportsVertexInputDynamicState.enabled ||
-               mVertexAttributeDivisorFeatures.vertexAttributeInstanceRateZeroDivisor == VK_TRUE;
+        return mMinRPWriteCommandCountToEarlySubmit;
     }
 
-    uint32_t getMinCommandCountToSubmit() const { return mMinCommandCountToSubmit; }
-
-    angle::Result onFrameBoundary(const gl::Context *contextGL);
+    void logFeatures() const;
 
   private:
     angle::Result setupDevice(vk::ErrorContext *context,
@@ -778,6 +772,8 @@ class Renderer : angle::NonCopyable
                       const angle::FeatureOverrides &featureOverrides,
                       UseVulkanSwapchain useVulkanSwapchain,
                       angle::NativeWindowSystem nativeWindowSystem);
+    void initOpenCLFeatures(const vk::ExtensionNameList &extensions,
+                            const angle::FeatureOverrides &featureOverrides);
     void appBasedFeatureOverrides(const vk::ExtensionNameList &extensions);
     angle::Result initPipelineCache(vk::ErrorContext *context,
                                     vk::PipelineCache *pipelineCache,
@@ -932,9 +928,14 @@ class Renderer : angle::NonCopyable
     VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR mUnifiedImageLayoutsFeatures;
     VkPhysicalDeviceShaderIntegerDotProductFeatures mShaderIntegerDotProductFeatures;
     VkPhysicalDeviceShaderIntegerDotProductProperties mShaderIntegerDotProductProperties;
+    VkPhysicalDeviceShaderDemoteToHelperInvocationFeatures mShaderDemoteToHelperInvocationFeatures;
     VkPhysicalDeviceGlobalPriorityQueryFeaturesEXT mPhysicalDeviceGlobalPriorityQueryFeatures;
     VkPhysicalDeviceExternalMemoryHostPropertiesEXT mExternalMemoryHostProperties;
     VkPhysicalDeviceBufferDeviceAddressFeaturesKHR mBufferDeviceAddressFeatures;
+    VkPhysicalDeviceShaderAtomicInt64Features mShaderAtomicInt64Features;
+    VkPhysicalDeviceTileMemoryHeapFeaturesQCOM mTileMemoryHeapFeatures;
+    VkPhysicalDeviceTileMemoryHeapPropertiesQCOM mTileMemoryHeapProperties;
+    VkPhysicalDeviceTextureCompressionASTC3DFeaturesEXT mTextureCompressionASTC3DFeatures;
 
     uint32_t mLegacyDitheringVersion = 0;
 
@@ -979,6 +980,8 @@ class Renderer : angle::NonCopyable
     vk::ImageMemorySuballocator mImageMemorySuballocator;
 
     vk::MemoryProperties mMemoryProperties;
+    uint32_t mTileMemoyTypeIndex;
+    VkDeviceSize mPreferredInitialBufferBlockSize;
     VkDeviceSize mPreferredLargeHeapBlockSize;
 
     // The default alignment for BufferVk object
@@ -1114,6 +1117,9 @@ class Renderer : angle::NonCopyable
     // A placeholder descriptor set layout handle for layouts with no bindings.
     vk::DescriptorSetLayoutPtr mPlaceHolderDescriptorSetLayout;
 
+    // Allocation size limit for a single object.
+    VkDeviceSize mMaxMemoryAllocationSize;
+
     // Cached value for the buffer memory size limit.
     VkDeviceSize mMaxBufferMemorySizeLimit;
 
@@ -1126,9 +1132,9 @@ class Renderer : angle::NonCopyable
     uint32_t mPreferredVectorWidthDouble;
     uint32_t mPreferredVectorWidthHalf;
 
-    // The number of minimum commands in the command buffer to prefer submit at FBO boundary or
-    // immediately submit when the device is idle after calling to flush.
-    uint32_t mMinCommandCountToSubmit;
+    // The number of minimum write commands in the command buffer to trigger one submission of
+    // pending commands at draw call time
+    uint32_t mMinRPWriteCommandCountToEarlySubmit;
 };
 
 ANGLE_INLINE Serial Renderer::generateQueueSerial(SerialIndex index)

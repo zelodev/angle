@@ -97,6 +97,9 @@ struct AccessChain
     // Whether all indices are literal.  Avoids looping through indices to determine this
     // information.
     bool areAllIndicesLiteral = true;
+    // Whether accessing gl_HelperInvocation.  With SPV_EXT_demote_to_helper_invocation, it's
+    // replaced with OpIsHelperInvocationEXT instead of OpLoad.
+    bool isHelperInvocation = false;
     // The number of components in the vector, if vector and swizzle is used.  This is cached to
     // avoid a type look up when handling swizzles.
     uint8_t swizzledVectorComponentCount = 0;
@@ -164,7 +167,7 @@ struct BuiltInResultStructHash
             static_cast<uint8_t>(key.msbPrimarySize),
         };
 
-        return angle::ComputeGenericHash(properties, sizeof(properties));
+        return angle::ComputeGenericHash(properties);
     }
 };
 
@@ -177,6 +180,15 @@ bool operator==(const BuiltInResultStruct &a, const BuiltInResultStruct &b)
 bool IsAccessChainRValue(const AccessChain &accessChain)
 {
     return accessChain.storageClass == spv::StorageClassMax;
+}
+
+bool IsAccessChainHelperInvocation(const AccessChain &accessChain)
+{
+    // Special case for SPV_EXT_demote_to_helper_invocation, where the HelperInvocation built-in is
+    // ignored and OpIsHelperInvocationEXT is used instead.  Once SPIR-V 1.6 is generated,
+    // OpIsHelperInvocationEXT should be removed along with this function, and the HelperInvocation
+    // variable declared as Volatile instead.
+    return accessChain.isHelperInvocation;
 }
 
 // A traverser that generates SPIR-V as it walks the AST.
@@ -993,6 +1005,8 @@ spirv::IdRef OutputSPIRVTraverser::accessChainLoad(NodeData *data,
 
     spirv::IdRef loadResult = data->baseId;
 
+    ASSERT(!(IsAccessChainHelperInvocation(accessChain) && IsAccessChainRValue(accessChain)));
+
     if (IsAccessChainRValue(accessChain))
     {
         if (data->idList.size() > 0)
@@ -1031,6 +1045,15 @@ spirv::IdRef OutputSPIRVTraverser::accessChainLoad(NodeData *data,
                                  accessChain.preSwizzleTypeId, loadResult, accessChainId, nullptr);
             }
         }
+    }
+    else if (IsAccessChainHelperInvocation(accessChain))
+    {
+        // Special case for SPV_EXT_demote_to_helper_invocation, where the HelperInvocation built-in
+        // is ignored.  Once SPIR-V 1.6 is generated, OpIsHelperInvocationEXT should be removed and
+        // the HelperInvocation variable declared as Volatile instead.
+        loadResult = mBuilder.getNewId(decorations);
+        spirv::WriteIsHelperInvocationEXT(mBuilder.getSpirvCurrentFunctionBlock(),
+                                          accessChain.preSwizzleTypeId, loadResult);
     }
     else
     {
@@ -2341,6 +2364,60 @@ void OutputSPIRVTraverser::visitArrayLength(TIntermUnary *node)
     nodeDataInitRValue(&mNodeData.back(), castResultId, intTypeId);
 }
 
+// If an expression is short-circuited, it must not be executed.  However, in some cases there is
+// nothing to execute, such as constants, variables etc.  Notably, hasSideEffects() is not
+// a sufficient check, because it could include read-only operations that are out of bounds, despite
+// not having any side effects.
+bool IsSafeToExecuteInShortCircuit(TIntermTyped *node)
+{
+    // Constants and symbols are safe to execute.
+    if (node->getAsConstantUnion() || node->getAsSymbolNode())
+    {
+        return true;
+    }
+
+    // Swizzle is safe if the operand is safe.
+    {
+        TIntermSwizzle *asSwizzle = node->getAsSwizzleNode();
+        if (asSwizzle)
+        {
+            return IsSafeToExecuteInShortCircuit(asSwizzle->getOperand());
+        }
+    }
+
+    // Indexing a struct or interface block is safe to execute, as long as no array index is in the
+    // access chain.
+    {
+        TIntermBinary *asBinary = node->getAsBinaryNode();
+        if (asBinary != nullptr)
+        {
+            return (asBinary->getOp() == EOpIndexDirectInterfaceBlock ||
+                    asBinary->getOp() == EOpIndexDirectStruct) &&
+                   IsSafeToExecuteInShortCircuit(asBinary->getLeft());
+        }
+    }
+
+    // Constructors are safe as long as every member is safe.
+    {
+        TIntermAggregate *asAggregate = node->getAsAggregate();
+        if (asAggregate != nullptr && asAggregate->getOp() == EOpConstruct)
+        {
+            for (TIntermNode *component : *asAggregate->getSequence())
+            {
+                if (!IsSafeToExecuteInShortCircuit(component->getAsTyped()))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    // Assume everything else is unsafe.  This includes safe but complex expressions that are better
+    // off not getting executed anyway.
+    return false;
+}
+
 bool IsShortCircuitNeeded(TIntermOperator *node)
 {
     TOperator op = node->getOp();
@@ -2353,12 +2430,9 @@ bool IsShortCircuitNeeded(TIntermOperator *node)
 
     ASSERT(node->getChildCount() == 2);
 
-    // If the right hand side does not have side effects, short-circuiting is unnecessary.
-    // TODO: experiment with the performance of OpLogicalAnd/Or vs short-circuit based on the
-    // complexity of the right hand side expression.  We could potentially only allow
-    // OpLogicalAnd/Or if the right hand side is a constant or an access chain and have more complex
-    // expressions be placed inside an if block.  http://anglebug.com/40096715
-    return node->getChildNode(1)->getAsTyped()->hasSideEffects();
+    // If the right hand side is not safe to execute, short-circuiting is needed
+    // For example: is_in_bounds(index) && access(data[index])
+    return !IsSafeToExecuteInShortCircuit(node->getChildNode(1)->getAsTyped());
 }
 
 using WriteUnaryOp      = void (*)(spirv::Blob *blob,
@@ -3292,11 +3366,6 @@ spirv::IdRef OutputSPIRVTraverser::createAtomicBuiltIn(TIntermOperator *node,
     {
         // One parameter for coordinates.
         ++imagePointerParameterCount;
-        if (IsImageMS(operandBasicType))
-        {
-            // One parameter for samples.
-            ++imagePointerParameterCount;
-        }
     }
 
     ASSERT(parameterCount >= 2 + imagePointerParameterCount);
@@ -3804,8 +3873,7 @@ spirv::IdRef OutputSPIRVTraverser::createImageTextureBuiltIn(TIntermOperator *no
     // If an implicit-lod instruction is used outside a fragment shader, change that to an explicit
     // one as they are not allowed in SPIR-V outside fragment shaders.
     const bool noLodSupport = IsSamplerBuffer(samplerBasicType) ||
-                              IsImageBuffer(samplerBasicType) || IsSamplerMS(samplerBasicType) ||
-                              IsImageMS(samplerBasicType);
+                              IsImageBuffer(samplerBasicType) || IsSamplerMS(samplerBasicType);
     const bool makeLodExplicit =
         mCompiler->getShaderType() != GL_FRAGMENT_SHADER && lodIndex == 0 && dPdxIndex == 0 &&
         !noLodSupport && (spirvOp == spv::OpImageSampleImplicitLod || spirvOp == spv::OpImageFetch);
@@ -5007,6 +5075,16 @@ void OutputSPIRVTraverser::visitSymbol(TIntermSymbol *node)
         case EvqCullDistance:
             mBuilder.addCapability(spv::CapabilityCullDistance);
             break;
+        case EvqHelperInvocation:
+            if (mCompileOptions.useDemoteToHelperInvocation)
+            {
+                // When SPV_EXT_demote_to_helper_invocation is used, reads from HelperInvocation are
+                // replaced by OpIsHelperInvocationEXT.
+                mNodeData.back().accessChain.isHelperInvocation = true;
+                mBuilder.addCapability(spv::CapabilityDemoteToHelperInvocationEXT);
+                mBuilder.addExtension(SPIRVExtensions::DemoteToHelperInvocation);
+            }
+            break;
         default:
             break;
     }
@@ -5300,8 +5378,8 @@ bool OutputSPIRVTraverser::visitTernary(Visit visit, TIntermTernary *node)
     // prior to 1.4 requires the type to be either scalar or vector.
     const TType &type   = node->getType();
     bool canUseOpSelect = (type.isScalar() || type.isVector() || mCompileOptions.emitSPIRV14) &&
-                          !node->getTrueExpression()->hasSideEffects() &&
-                          !node->getFalseExpression()->hasSideEffects();
+                          IsSafeToExecuteInShortCircuit(node->getTrueExpression()) &&
+                          IsSafeToExecuteInShortCircuit(node->getFalseExpression());
 
     // Don't use OpSelect on buggy drivers.  Technically this is only needed if the two sides don't
     // have matching use of RelaxedPrecision, but not worth being precise about it.
@@ -6123,7 +6201,6 @@ bool OutputSPIRVTraverser::visitDeclaration(Visit visit, TIntermDeclaration *nod
     TIntermSymbol *symbol = sequence.front()->getAsSymbolNode();
     spirv::IdRef initializerId;
     bool initializeWithDeclaration = false;
-    bool needsQuantizeTo16         = false;
 
     // Handle declarations with initializer.
     if (symbol == nullptr)
@@ -6172,35 +6249,6 @@ bool OutputSPIRVTraverser::visitDeclaration(Visit visit, TIntermDeclaration *nod
         {
             // Otherwise generate code to load from right hand side expression.
             initializerId = accessChainLoad(&mNodeData.back(), symbol->getType(), nullptr);
-
-            // Workaround for issuetracker.google.com/274859104
-            // ARM SpirV compiler may utilize the RelaxedPrecision of mediump float,
-            // and chooses to not cast mediump float to 16 bit. This causes deqp test
-            // dEQP-GLES2.functional.shaders.algorithm.rgb_to_hsl_vertex failed.
-            // The reason is that GLSL shader code expects below condition to be true:
-            // mediump float a == mediump float b;
-            // However, the condition is false after translating to SpirV
-            // due to one of them is 32 bit, and the other is 16 bit.
-            // To resolve the deqp test failure, we will add an OpQuantizeToF16
-            // SpirV instruction to explicitly cast mediump float scalar or mediump float
-            // vector to 16 bit, if the right-hand-side is a highp float.
-            if (mCompileOptions.castMediumpFloatTo16Bit)
-            {
-                const TType leftType            = assign->getLeft()->getType();
-                const TType rightType           = assign->getRight()->getType();
-                const TPrecision leftPrecision  = leftType.getPrecision();
-                const TPrecision rightPrecision = rightType.getPrecision();
-                const bool isLeftScalarFloat    = leftType.isScalarFloat();
-                const bool isLeftVectorFloat = leftType.isVector() && !leftType.isVectorArray() &&
-                                               leftType.getBasicType() == EbtFloat;
-
-                if (leftPrecision == TPrecision::EbpMedium &&
-                    rightPrecision == TPrecision::EbpHigh &&
-                    (isLeftScalarFloat || isLeftVectorFloat))
-                {
-                    needsQuantizeTo16 = true;
-                }
-            }
         }
 
         // Clean up the initializer data.
@@ -6259,17 +6307,6 @@ bool OutputSPIRVTraverser::visitDeclaration(Visit visit, TIntermDeclaration *nod
 
     if (!initializeWithDeclaration && initializerId.valid())
     {
-        // If not initializing at the same time as the declaration, issue a store
-        if (needsQuantizeTo16)
-        {
-            // Insert OpQuantizeToF16 instruction to explicitly cast mediump float to 16 bit before
-            // issuing an OpStore instruction.
-            const spirv::IdRef quantizeToF16Result =
-                mBuilder.getNewId(mBuilder.getDecorations(symbol->getType()));
-            spirv::WriteQuantizeToF16(mBuilder.getSpirvCurrentFunctionBlock(), typeId,
-                                      quantizeToF16Result, initializerId);
-            initializerId = quantizeToF16Result;
-        }
         spirv::WriteStore(mBuilder.getSpirvCurrentFunctionBlock(), variableId, initializerId,
                           nullptr);
     }
@@ -6603,8 +6640,19 @@ bool OutputSPIRVTraverser::visitBranch(Visit visit, TIntermBranch *node)
     switch (node->getFlowOp())
     {
         case EOpKill:
-            spirv::WriteKill(mBuilder.getSpirvCurrentFunctionBlock());
-            mBuilder.terminateCurrentFunctionBlock();
+            if (mCompileOptions.useDemoteToHelperInvocation)
+            {
+                spirv::WriteDemoteToHelperInvocation(mBuilder.getSpirvCurrentFunctionBlock());
+                mBuilder.addCapability(spv::CapabilityDemoteToHelperInvocationEXT);
+                mBuilder.addExtension(SPIRVExtensions::DemoteToHelperInvocation);
+                // Note: this is not a branch instruction, so the block is not terminated.  The GLSL
+                // block will end right after this, which automatically terminates this block.
+            }
+            else
+            {
+                spirv::WriteKill(mBuilder.getSpirvCurrentFunctionBlock());
+                mBuilder.terminateCurrentFunctionBlock();
+            }
             break;
         case EOpBreak:
             spirv::WriteBranch(mBuilder.getSpirvCurrentFunctionBlock(),

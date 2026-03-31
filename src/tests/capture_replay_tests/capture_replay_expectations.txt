@@ -55,6 +55,9 @@
 # Fails because of unsupported combined depth/stencil GetImage.
 42263287 : DepthStencilTest.DepthOnlyEmulatedWithPacked/* = FAIL
 
+# Provoking vertex
+463966221 : ProvokingVertexTest.* = FAIL
+
 # ES3
 42264706 : BlitFramebufferTest.BlitDepthStencilPixelByPixel/* = NOT_RUN
 42264706 : GLSLTest_ES3.UnsuccessfulRelinkWithBindAttribLocation/* = NOT_RUN
@@ -77,6 +80,7 @@
 42264831 : FramebufferTest_ES3.AttachmentsWithUnequalDimensions/* = SKIP_FOR_CAPTURE
 42264831 : FramebufferTest_ES3.ChangeAttachmentThenInvalidateAndDraw/* = SKIP_FOR_CAPTURE
 42264831 : FramebufferTest_ES3.RenderAndInvalidateImmutableTextureWithBeyondMaxLevel/* = SKIP_FOR_CAPTURE
+490170083 : CopyTextureTestES3.SRGBWithPackParameters/* = SKIP_FOR_CAPTURE
 
 # The following tests fail with forceRobustResourceInit
 # They were accidentally passing until http://crrev/c/5588816
@@ -256,9 +260,12 @@
 # Crashes in gl::JoinShaderSources during replay
 447613212 : GLSLTest.EmptyShader/* = SKIP_FOR_CAPTURE
 
+# Missing support for GL_ANGLE_translated_shader_source
+454830637 : GLSLConstantFoldingTest* = SKIP_FOR_CAPTURE
+454830637 : GLSLValidation*Test* = SKIP_FOR_CAPTURE
+454830637 : WebGLGLSLValidation*Test* = SKIP_FOR_CAPTURE
+454830637 : WebGL2GLSLValidation*Test* = SKIP_FOR_CAPTURE
+454830637 : GLSLOutput*Test* = SKIP_FOR_CAPTURE
+
 # Crashes on win and linux trace bots
 372059358 : MultisampleTestES3.CopyTexImage2DFromMsaaDefaultFbo/* = SKIP_FOR_CAPTURE
-
-# Test failure on win and linux trace
-400584608 : BlitFramebufferTest.BlitLargeColorSmallDepthAttachments/* = SKIP_FOR_CAPTURE
-400584608 : BlitFramebufferTest.BlitSmallColorLargeDepthAttachments/* = SKIP_FOR_CAPTURE

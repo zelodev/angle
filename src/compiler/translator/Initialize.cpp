@@ -81,10 +81,6 @@ void InitExtensionBehavior(const ShBuiltInResources &resources, TExtensionBehavi
     {
         extBehavior[TExtension::EXT_shader_framebuffer_fetch_non_coherent] = EBhUndefined;
     }
-    if (resources.NV_shader_framebuffer_fetch)
-    {
-        extBehavior[TExtension::NV_shader_framebuffer_fetch] = EBhUndefined;
-    }
     if (resources.NV_shader_noperspective_interpolation)
     {
         extBehavior[TExtension::NV_shader_noperspective_interpolation] = EBhUndefined;
@@ -257,6 +253,17 @@ void ResetExtensionBehavior(const ShBuiltInResources &resources,
             // enabled by default.
             extBehavior[TExtension::ARB_texture_rectangle] = EBhEnable;
         }
+    }
+    // ANGLE_multi_draw and ANGLE_base_vertex_base_instance are always emulated, so remove them if
+    // emulation is not enabled.
+    if (resources.ANGLE_multi_draw && !compileOptions.emulateGLDrawID)
+    {
+        extBehavior.erase(TExtension::ANGLE_multi_draw);
+    }
+    if (resources.ANGLE_base_vertex_base_instance_shader_builtin &&
+        !compileOptions.emulateGLBaseVertexBaseInstance)
+    {
+        extBehavior.erase(TExtension::ANGLE_base_vertex_base_instance_shader_builtin);
     }
 }
 

@@ -365,6 +365,11 @@ inline bool IsPixel7()
     return IsAndroidDevice("Pixel 7");
 }
 
+inline bool IsPixel10()
+{
+    return IsAndroidDevice("Pixel 10");
+}
+
 inline bool IsOppoFlipN2()
 {
     return IsAndroidDevice("CPH2437");
@@ -553,6 +558,7 @@ GPUTestConfig::GPUTestConfig(bool isSwiftShader)
     mConditions[kConditionPixel4OrXL]       = !isSwiftShader && (IsPixel4() || IsPixel4XL());
     mConditions[kConditionPixel6]           = !isSwiftShader && (IsPixel6());
     mConditions[kConditionPixel7]           = !isSwiftShader && (IsPixel7());
+    mConditions[kConditionPixel10]           = !isSwiftShader && (IsPixel10());
     mConditions[kConditionFlipN2]           = !isSwiftShader && (IsOppoFlipN2());
     mConditions[kConditionMaliG710]         = !isSwiftShader && (IsMaliG710());
     mConditions[kConditionGalaxyA23]        = !isSwiftShader && (IsGalaxyA23());
@@ -576,6 +582,14 @@ GPUTestConfig::GPUTestConfig(bool isSwiftShader)
     mConditions[kConditionASan]  = IsASan();
     mConditions[kConditionTSan]  = IsTSan();
     mConditions[kConditionUBSan] = IsUBSan();
+
+#ifdef ANGLE_IR
+    // The IR can be disabled at runtime, but we can't detect that.  For the purposes of test
+    // expectations, especially for deqp, assume that if the IR is built, it's used.
+    mConditions[kConditionIR] = true;
+#else
+    mConditions[kConditionIR] = false;
+#endif
 }
 
 // If the constructor is passed an API, load those conditions as well

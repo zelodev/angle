@@ -821,7 +821,7 @@ angle::Result ProgramExecutableVk::load(ContextVk *contextVk,
         {
             bool compressedData = false;
             stream->readBool(&compressedData);
-            stream->readBytes(compressedPipelineData.data(), compressedPipelineDataSize);
+            stream->readBytes(compressedPipelineData);
             // Initialize the pipeline cache based on cached data.
             ANGLE_TRY(initializePipelineCache(contextVk, compressedData, compressedPipelineData));
         }
@@ -878,7 +878,7 @@ void ProgramExecutableVk::save(ContextVk *contextVk,
         if (cacheData.size() > 0)
         {
             stream->writeBool(contextVk->getFeatures().enablePipelineCacheDataCompression.enabled);
-            stream->writeBytes(cacheData.data(), cacheData.size());
+            stream->writeBytes(cacheData);
         }
     }
 }
@@ -1008,7 +1008,7 @@ angle::Result ProgramExecutableVk::preparePipelineCacheForWarmUp(
                                  ? gl::PrimitiveMode::Patches
                              : mExecutable->hasLinkedShaderStage(gl::ShaderType::Geometry)
                                  ? mExecutable->getGeometryShaderInputPrimitiveType()
-                                 : gl::PrimitiveMode::TriangleStrip;
+                                 : gl::PrimitiveMode::Triangles;
     SetupDefaultPipelineState(context, *mExecutable, mode, pipelineRobustness,
                               pipelineProtectedAccess, subset, &mWarmUpGraphicsPipelineDesc);
 
@@ -1725,6 +1725,7 @@ angle::Result ProgramExecutableVk::createPipelineLayout(
     DescriptorSetLayoutCache *descriptorSetLayoutCache,
     gl::ActiveTextureArray<TextureVk *> *activeTextures)
 {
+    vk::Renderer *renderer                     = context->getRenderer();
     const gl::ShaderBitSet &linkedShaderStages = mExecutable->getLinkedShaderStages();
 
     // Store a reference to the pipeline and descriptor set layouts. This will create them if they
@@ -1749,16 +1750,19 @@ angle::Result ProgramExecutableVk::createPipelineLayout(
     gl::ShaderType linkedTransformFeedbackStage = mExecutable->getLinkedTransformFeedbackStage();
     bool hasXfbVaryings = linkedTransformFeedbackStage != gl::ShaderType::InvalidEnum &&
                           !mExecutable->getLinkedTransformFeedbackVaryings().empty();
-    if (context->getFeatures().emulateTransformFeedback.enabled && hasXfbVaryings)
+    if (context->getFeatures().emulateTransformFeedback.enabled)
     {
-        size_t xfbBufferCount = mExecutable->getTransformFeedbackBufferCount();
-        for (uint32_t bufferIndex = 0; bufferIndex < xfbBufferCount; ++bufferIndex)
+        if (hasXfbVaryings)
         {
-            const uint32_t binding = mVariableInfoMap.getEmulatedXfbBufferBinding(bufferIndex);
-            ASSERT(binding != std::numeric_limits<uint32_t>::max());
+            size_t xfbBufferCount = mExecutable->getTransformFeedbackBufferCount();
+            for (uint32_t bufferIndex = 0; bufferIndex < xfbBufferCount; ++bufferIndex)
+            {
+                const uint32_t binding = mVariableInfoMap.getEmulatedXfbBufferBinding(bufferIndex);
+                ASSERT(binding != std::numeric_limits<uint32_t>::max());
 
-            mDefaultUniformAndXfbSetDesc.addBinding(binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                                                    VK_SHADER_STAGE_VERTEX_BIT, nullptr);
+                mDefaultUniformAndXfbSetDesc.addBinding(binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                        1, VK_SHADER_STAGE_VERTEX_BIT, nullptr);
+            }
         }
     }
 
@@ -1785,7 +1789,7 @@ angle::Result ProgramExecutableVk::createPipelineLayout(
     }
 
     // Decide if we should use dynamic or fixed descriptor types.
-    VkPhysicalDeviceLimits limits = context->getRenderer()->getPhysicalDeviceProperties().limits;
+    VkPhysicalDeviceLimits limits = renderer->getPhysicalDeviceProperties().limits;
     uint32_t totalDynamicUniformBufferCount =
         numActiveUniformBufferDescriptors + numDefaultUniformDescriptors;
     if (totalDynamicUniformBufferCount <= limits.maxDescriptorSetUniformBuffersDynamic)
@@ -1838,10 +1842,9 @@ angle::Result ProgramExecutableVk::createPipelineLayout(
     // Set up driver uniforms as push constants. The size is set for a graphics pipeline, as there
     // are more driver uniforms for a graphics pipeline than there are for a compute pipeline. As
     // for the shader stages, both graphics and compute stages are used.
-    VkShaderStageFlags pushConstantShaderStageFlags =
-        context->getRenderer()->getSupportedVulkanShaderStageMask();
+    VkShaderStageFlags pushConstantShaderStageFlags = renderer->getSupportedVulkanShaderStageMask();
+    uint32_t pushConstantSize = GraphicsDriverUniforms::GetMaxUniformDataSize(renderer);
 
-    uint32_t pushConstantSize = GetDriverUniformSize(context, PipelineType::Graphics);
     pipelineLayoutDesc.updatePushConstantRange(pushConstantShaderStageFlags, 0, pushConstantSize);
 
     ANGLE_TRY(pipelineLayoutCache->getPipelineLayout(context, pipelineLayoutDesc,
@@ -2198,7 +2201,12 @@ void ProgramExecutableVk::updateShaderResourcesWithSharedCacheKey(
             // For simplicity, we do not check if uniform is active or duplicate. The worst case is
             // we unnecessarily delete the cache entry when image bound to inactive uniform is
             // destroyed.
-            activeImages[imageUnit]->onNewDescriptorSet(newSharedCacheKey);
+            TextureVk *textureVk = activeImages[imageUnit];
+            if (!textureVk)
+            {
+                continue;
+            }
+            textureVk->onNewDescriptorSet(newSharedCacheKey);
         }
     }
 }

@@ -68,6 +68,8 @@ std::shared_ptr<ShaderTranslateTask> ShaderMtl::compile(const gl::Context *conte
 
     options->separateCompoundStructDeclarations = true;
 
+    options->forceDeferNonConstGlobalInitializers = true;
+
     if (context->isWebGL() && mState.getShaderType() != gl::ShaderType::Compute)
     {
         options->initOutputVariables = true;
@@ -87,6 +89,7 @@ std::shared_ptr<ShaderTranslateTask> ShaderMtl::compile(const gl::Context *conte
     }
 
     options->removeInactiveVariables = true;
+    options->retainInactiveFragmentOutputs = true;
 
     // Constants:
     options->metal.driverUniformsBindingIndex    = mtl::kDriverUniformsBindingIndex;
@@ -125,7 +128,7 @@ std::shared_ptr<ShaderTranslateTask> ShaderMtl::load(const gl::Context *context,
 
 std::string ShaderMtl::getDebugInfo() const
 {
-    return mState.getCompiledState()->translatedSource;
+    return *mState.getCompiledState()->translatedSource;
 }
 
 }  // namespace rx

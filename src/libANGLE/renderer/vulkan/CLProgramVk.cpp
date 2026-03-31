@@ -13,6 +13,7 @@
 #include "libANGLE/renderer/vulkan/CLProgramVk.h"
 #include "libANGLE/CLBuffer.h"
 #include "libANGLE/renderer/vulkan/CLContextVk.h"
+#include "libANGLE/renderer/vulkan/cl_types.h"
 #include "libANGLE/renderer/vulkan/clspv_utils.h"
 #include "libANGLE/renderer/vulkan/vk_cache_utils.h"
 #include "libANGLE/renderer/vulkan/vk_helpers.h"
@@ -240,6 +241,13 @@ spv_result_t ParseReflection(CLProgramVk::SpvReflectionData &reflectionData,
                     reflectionData.specConstantIDs[SpecConstantType::WorkDimension] =
                         reflectionData.spvIntLookup[spvInstr.words[5]];
                     reflectionData.specConstantsUsed[SpecConstantType::WorkDimension] = true;
+                    break;
+                }
+                case NonSemanticClspvReflectionSpecConstantSubgroupMaxSize:
+                {
+                    reflectionData.specConstantIDs[SpecConstantType::SubgroupMaxSize] =
+                        reflectionData.spvIntLookup[spvInstr.words[5]];
+                    reflectionData.specConstantsUsed[SpecConstantType::SubgroupMaxSize] = true;
                     break;
                 }
                 case NonSemanticClspvReflectionSpecConstantGlobalOffset:
@@ -504,8 +512,8 @@ angle::Result CLProgramVk::init(const size_t *lengths,
         // Add device binary to program
         DeviceProgramData deviceBinary;
         deviceBinary.spirvVersion = device->getImpl<CLDeviceVk>().getSpirvVersion();
-        deviceBinary.binaryType  = binaryHeader->binaryType;
-        deviceBinary.buildStatus = binaryHeader->buildStatus;
+        deviceBinary.binaryType   = binaryHeader->binaryType;
+        deviceBinary.buildStatus  = binaryHeader->buildStatus;
         switch (deviceBinary.binaryType)
         {
             case CL_PROGRAM_BINARY_TYPE_EXECUTABLE:
@@ -913,26 +921,23 @@ bool CLProgramVk::buildInternal(const cl::DevicePtrs &devices,
     // Cache original options string
     mProgramOpts = options;
 
-    // Process options and append any other internal (required) options for clspv
-    std::vector<std::string> optionTokens;
-    angle::SplitStringAlongWhitespace(options + " " + internalOptions, &optionTokens);
-    const bool createLibrary     = std::find(optionTokens.begin(), optionTokens.end(),
-                                             "-create-library") != optionTokens.end();
-    std::string processedOptions = ProcessBuildOptions(optionTokens, buildType);
-
     // Build for each associated device
     for (size_t i = 0; i < devices.size(); ++i)
     {
         const cl::RefPointer<cl::Device> &device = devices.at(i);
         DeviceProgramData &deviceProgramData     = mAssociatedDevicePrograms[device->getNative()];
         deviceProgramData.spirvVersion           = device->getImpl<CLDeviceVk>().getSpirvVersion();
-
-        // add clspv compiler options based on device features
-        processedOptions += ClspvGetCompilerOptions(&device->getImpl<CLDeviceVk>());
-
         if (buildType != BuildType::BINARY)
         {
-            // Invoke clspv
+            // Process options and append any other internal (required) options for clspv
+            std::vector<std::string> optionTokens;
+            angle::SplitStringAlongWhitespace(options + " " + internalOptions, &optionTokens);
+            const bool createLibrary     = std::find(optionTokens.begin(), optionTokens.end(),
+                                                     "-create-library") != optionTokens.end();
+            std::string processedOptions = ProcessBuildOptions(optionTokens, buildType);
+            // add clspv compiler options based on device features
+            processedOptions += ClspvGetCompilerOptions(&device->getImpl<CLDeviceVk>());
+
             switch (buildType)
             {
                 case BuildType::BUILD:
@@ -949,6 +954,8 @@ bool CLProgramVk::buildInternal(const cl::DevicePtrs &devices,
                     if (clspvRet != CLSPV_SUCCESS)
                     {
                         ERR() << "OpenCL build failed with: ClspvError(" << clspvRet << ")!";
+                        ERR() << "Clspv option: " << processedOptions;
+                        ERR() << "Build log: " << std::endl << deviceProgramData.buildLog;
                         deviceProgramData.buildStatus = CL_BUILD_ERROR;
                         return false;
                     }
@@ -990,6 +997,8 @@ bool CLProgramVk::buildInternal(const cl::DevicePtrs &devices,
                     if (clspvRet != CLSPV_SUCCESS)
                     {
                         ERR() << "OpenCL build failed with: ClspvError(" << clspvRet << ")!";
+                        ERR() << "Clspv option: " << processedOptions;
+                        ERR() << "Build log: " << std::endl << deviceProgramData.buildLog;
                         deviceProgramData.buildStatus = CL_BUILD_ERROR;
                         return false;
                     }

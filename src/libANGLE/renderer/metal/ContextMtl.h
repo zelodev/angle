@@ -342,15 +342,14 @@ class ContextMtl : public ContextImpl, public mtl::Context
                                        gl::SamplerFormat format,
                                        gl::Texture **textureOut);
 
-    // Recommended to call these methods to end encoding instead of invoking the encoder's
-    // endEncoding() directly.
-    void endRenderEncoding(mtl::RenderCommandEncoder *encoder);
     // Ends any active command encoder
     void endEncoding(bool forceSaveRenderPassContent);
 
     void flushCommandBuffer(mtl::CommandBufferFinishOperation operation);
     void present(const gl::Context *context, id<CAMetalDrawable> presentationDrawable);
     angle::Result finishCommandBuffer();
+
+    void addCommandBufferScheduledCallback(std::function<void()> callback);
 
     // Check whether compatible render pass has been started. Compatible render pass is a render
     // pass having the same attachments, and possibly having different load/store options.
@@ -567,12 +566,12 @@ class ContextMtl : public ContextImpl, public mtl::Context
     // src/compiler/translator/DriverUniformMetal.cpp
     struct DriverUniforms
     {
-        uint32_t acbBufferOffsets[2];
         float depthRange[2];
         uint32_t renderArea;
         uint32_t flipXY;
-        uint32_t unused;
         uint32_t misc;
+        uint32_t unused;
+        uint32_t acbBufferOffsets[2];
 
         int32_t xfbBufferOffsets[4];
         int32_t xfbVerticesPerInstance;

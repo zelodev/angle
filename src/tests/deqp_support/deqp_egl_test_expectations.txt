@@ -109,6 +109,7 @@
 // New failures when upgrading to Ubuntu 22/newer driver.
 362486580 LINUX NVIDIA VULKAN : dEQP-EGL.functional.mutable_render_buffer.basic = FAIL
 362486580 LINUX NVIDIA VULKAN : dEQP-EGL.functional.mutable_render_buffer.querySurface = FAIL
+362486580 LINUX NVIDIA VULKAN : dEQP-EGL.functional.robustness.reset_context.shaders.out_of_bounds_non_robust.reset_status.*.local_array.* = SKIP
 
 // Mac failures
 42261255 MAC : dEQP-EGL.functional.negative_api.copy_buffers = FAIL
@@ -131,6 +132,21 @@
 42267029 PIXEL6 VULKAN : dEQP-EGL.functional.robustness.reset_context.shaders.out_of_bounds_non_robust.reset_status.writes.local_array.compute = FAIL
 42267029 PIXEL6 VULKAN : dEQP-EGL.functional.robustness.reset_context.shaders.out_of_bounds_non_robust.reset_status.writes.shader_storage_block.compute = FAIL
 42267029 PIXEL6 VULKAN : dEQP-EGL.functional.robustness.reset_context.shaders.out_of_bounds_non_robust.reset_status.writes.uniform_block.compute = FAIL
+
+// Pixel 10
+448972978 PIXEL10 GLES : dEQP-EGL.functional.get_frame_timestamps.* = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.robustness.reset_context.fixed_function_pipeline.reset_status.* = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.thread_cleanup.* = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.wide_color.pbuffer_1010102_colorspace_default = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.wide_color.pbuffer_1010102_colorspace_p3_passthrough = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.wide_color.pbuffer_8888_colorspace_p3 = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.wide_color.pbuffer_8888_colorspace_srgb = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.wide_color.pbuffer_888_colorspace_p3 = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.wide_color.pbuffer_888_colorspace_srgb = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.wide_color.window_1010102_colorspace_default = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.wide_color.window_1010102_colorspace_p3_passthrough = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.wide_color.window_888_colorspace_p3 = FAIL
+448972978 PIXEL10 GLES : dEQP-EGL.functional.wide_color.window_888_colorspace_srgb = FAIL
 
 // ES 1 tests
 42261015 WIN : dEQP-EGL.functional.color_clears.single_context.gles1* = FAIL

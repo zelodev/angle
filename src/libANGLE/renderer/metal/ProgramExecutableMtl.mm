@@ -131,7 +131,7 @@ inline void copy_matrix_row_major(void *dst,
         }
     }
 }
-// TODO(angleproject:7979) Upgrade ANGLE Uniform buffer remapper to compute shaders
+// TODO(http://anglebug.com/42266442) Upgrade ANGLE Uniform buffer remapper to compute shaders
 angle::Result ConvertUniformBufferData(ContextMtl *contextMtl,
                                        const UBOConversionInfo &blockConversionInfo,
                                        mtl::BufferPool *dynamicBuffer,
@@ -788,7 +788,7 @@ angle::Result ProgramExecutableMtl::resizeDefaultUniformBlocksMemory(
     return angle::Result::Continue;
 }
 
-// TODO(angleproject:7979) Upgrade ANGLE Uniform buffer remapper to compute shaders
+// TODO(http://anglebug.com/42266442) Upgrade ANGLE Uniform buffer remapper to compute shaders
 void ProgramExecutableMtl::initUniformBlocksRemapper(const gl::SharedCompiledShaderState &shader)
 {
     std::unordered_map<std::string, UBOConversionInfo> conversionMap;
@@ -1309,12 +1309,11 @@ angle::Result ProgramExecutableMtl::legalizeUniformBufferOffsets(ContextMtl *con
             // Has the content of the buffer has changed since last conversion?
             if (conversion->dirty)
             {
-                const uint8_t *srcBytes = bufferMtl->getBufferDataReadOnly(context);
-                srcBytes += conversion->initialSrcOffset();
-                size_t sizeToCopy = bufferMtl->size() - conversion->initialSrcOffset();
+                angle::Span<const uint8_t> source =
+                    bufferMtl->getBufferDataReadOnly(context, conversion->initialSrcOffset());
 
                 ANGLE_TRY(ConvertUniformBufferData(
-                    context, conversionInfo, &conversion->data, srcBytes, sizeToCopy,
+                    context, conversionInfo, &conversion->data, source.data(), source.size(),
                     &conversion->convertedBuffer, &conversion->convertedOffset));
 
                 conversion->dirty = false;
@@ -1404,7 +1403,7 @@ angle::Result ProgramExecutableMtl::encodeUniformBuffersInfoArgumentBuffer(
 
     // MTLArgumentEncoder is modifying the buffer indirectly on CPU. We need to call map()
     // so that the buffer's data changes could be flushed to the GPU side later.
-    ANGLE_UNUSED_VARIABLE(argumentBuffer->mapWithOpt(context, /*readonly=*/false, /*noSync=*/true));
+    ANGLE_UNUSED_VARIABLE(argumentBuffer->mapNoSync(context));
 
     [bufferEncoder.metalArgBufferEncoder setArgumentBuffer:argumentBuffer->get()
                                                     offset:argumentBufferOffset];

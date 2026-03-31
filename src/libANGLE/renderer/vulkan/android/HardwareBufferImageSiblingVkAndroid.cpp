@@ -444,7 +444,16 @@ angle::Result HardwareBufferImageSiblingVkAndroid::initImpl(DisplayVk *displayVk
     bool robustInitEnabled = false;
 
     mImage->setTilingMode(imageTilingMode);
+
     VkImageCreateFlags imageCreateFlags = AhbDescUsageToVkImageCreateFlags(ahbDescription);
+    if (renderer->getFeatures().supportsMultisampledRenderToSingleSampled.enabled &&
+        (usage &
+         (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) != 0)
+    {
+        // We don't know if it will be used for MSRTSS or not, so always create with the bit
+        imageCreateFlags |= VK_IMAGE_CREATE_MULTISAMPLED_RENDER_TO_SINGLE_SAMPLED_BIT_EXT;
+    }
+
     vk::YcbcrConversionDesc conversionDesc{};
 
     if (isExternal)
@@ -497,19 +506,24 @@ angle::Result HardwareBufferImageSiblingVkAndroid::initImpl(DisplayVk *displayVk
     const gl::TextureType textureType = AhbDescUsageToTextureType(ahbDescription, layerCount);
     const angle::FormatID actualRenderableFormatID = vkFormat->getActualRenderableImageFormatID();
 
+    // If VkExternalFormatANDROID::externalFormat is non-zero disallow format reinterpretability
+    vk::ImageFormatReinterpretability formatReinterpretability =
+        (externalFormat.externalFormat != 0)
+            ? vk::ImageFormatReinterpretability::None
+            : vk::ImageFormatReinterpretability::ColorspaceOverrides;
     VkImageFormatListCreateInfoKHR imageFormatListInfoStorage;
-    vk::ImageHelper::ImageListFormats imageListFormatsStorage;
+    vk::ImageHelper::ImageFormats imageFormats;
 
     const void *imageCreateInfoPNext = vk::ImageHelper::DeriveCreateInfoPNext(
-        displayVk, usage, actualRenderableFormatID, &externalMemoryImageCreateInfo,
-        &imageFormatListInfoStorage, &imageListFormatsStorage, &imageCreateFlags);
+        displayVk, actualRenderableFormatID, &externalMemoryImageCreateInfo,
+        &imageFormatListInfoStorage, &imageFormats, formatReinterpretability, &imageCreateFlags);
 
-    ANGLE_TRY(mImage->initExternal(displayVk, textureType, vkExtents,
-                                   vkFormat->getIntendedFormatID(), actualRenderableFormatID, 1,
-                                   usage, imageCreateFlags, vk::ImageAccess::ExternalPreInitialized,
-                                   imageCreateInfoPNext, gl::LevelIndex(0), mLevelCount, layerCount,
-                                   robustInitEnabled, hasProtectedContent(), conversionDesc,
-                                   nullptr));
+    ANGLE_TRY(mImage->initExternal(
+        displayVk, textureType, vkExtents, vkFormat->getIntendedFormatID(),
+        actualRenderableFormatID, 1, usage, imageCreateFlags,
+        vk::ImageAccess::ExternalPreInitialized, imageCreateInfoPNext, gl::LevelIndex(0),
+        mLevelCount, layerCount, robustInitEnabled, hasProtectedContent(),
+        vk::TileMemory::Prohibited, conversionDesc, nullptr, formatReinterpretability));
 
     VkImportAndroidHardwareBufferInfoANDROID importHardwareBufferInfo = {};
     importHardwareBufferInfo.sType  = VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID;

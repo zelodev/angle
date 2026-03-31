@@ -1923,15 +1923,11 @@ bool IsTextureUpdate(CallCapture &call)
     {
         case EntryPoint::GLCompressedCopyTextureCHROMIUM:
         case EntryPoint::GLCompressedTexImage2D:
-        case EntryPoint::GLCompressedTexImage2DRobustANGLE:
         case EntryPoint::GLCompressedTexImage3D:
         case EntryPoint::GLCompressedTexImage3DOES:
-        case EntryPoint::GLCompressedTexImage3DRobustANGLE:
         case EntryPoint::GLCompressedTexSubImage2D:
-        case EntryPoint::GLCompressedTexSubImage2DRobustANGLE:
         case EntryPoint::GLCompressedTexSubImage3D:
         case EntryPoint::GLCompressedTexSubImage3DOES:
-        case EntryPoint::GLCompressedTexSubImage3DRobustANGLE:
         case EntryPoint::GLCopyTexImage2D:
         case EntryPoint::GLCopyTexSubImage2D:
         case EntryPoint::GLCopyTexSubImage3D:
@@ -2698,6 +2694,7 @@ void CaptureVertexArrayState(std::vector<CallCapture> *setupCalls,
 {
     const std::vector<gl::VertexAttribute> &vertexAttribs = vertexArray->getVertexAttributes();
     const std::vector<gl::VertexBinding> &vertexBindings  = vertexArray->getVertexBindings();
+    const gl::BufferManager &capturedBuffers = context->getState().getBufferManagerForCapture();
 
     gl::AttributesMask vertexPointerBindings;
 
@@ -2726,10 +2723,18 @@ void CaptureVertexArrayState(std::vector<CallCapture> *setupCalls,
             }
         }
 
+        gl::BufferID bufferID = {0};
+        if (buffer)
+        {
+            bufferID = buffer->id();
+        }
+
         // Don't capture CaptureVertexAttribPointer calls when a non-default VAO is bound, the array
         // buffer is null and a non-null attrib pointer is used.
         bool skipInvalidAttrib =
-            vertexArray->id().value != 0 && buffer == nullptr && attrib.pointer != nullptr;
+            vertexArray->id().value != 0 &&
+            (buffer == nullptr || !capturedBuffers.isHandleGenerated(bufferID)) &&
+            attrib.pointer != nullptr;
 
         if (!skipInvalidAttrib &&
             (attrib.format != defaultAttrib.format || attrib.pointer != defaultAttrib.pointer ||
@@ -2741,11 +2746,6 @@ void CaptureVertexArrayState(std::vector<CallCapture> *setupCalls,
             {
                 replayState->setBufferBinding(context, gl::BufferBinding::Array, buffer);
 
-                gl::BufferID bufferID = {0};
-                if (buffer)
-                {
-                    bufferID = buffer->id();
-                }
                 Capture(setupCalls,
                         CaptureBindBuffer(*replayState, true, gl::BufferBinding::Array, bufferID));
             }
@@ -3694,7 +3694,8 @@ void CaptureShareGroupMidExecutionSetup(
                 static_cast<GLsizeiptr>(buffer->getMapOffset()),
                 static_cast<GLsizeiptr>(buffer->getMapLength()),
                 (buffer->getAccessFlags() & GL_MAP_WRITE_BIT) != 0,
-                (buffer->getStorageExtUsageFlags() & GL_MAP_COHERENT_BIT_EXT) != 0);
+                (buffer->getStorageExtUsageFlags() & GL_MAP_COHERENT_BIT_EXT) != 0,
+                (buffer->getStorageExtUsageFlags() & GL_MAP_PERSISTENT_BIT_EXT) != 0);
         }
         else
         {
@@ -4176,25 +4177,45 @@ void CaptureShareGroupMidExecutionSetup(
 
         GLenum internalformat = renderbuffer->getFormat().info->internalFormat;
 
-        if (renderbuffer->getSamples() > 0)
+        // Depending on the multisampling mode, we have to issue different commands
+        switch (renderbuffer->getMultisamplingMode())
         {
-            // Note: We could also use extensions if available.
-            for (std::vector<CallCapture> *calls : rbGenCalls)
-            {
-                Capture(calls,
-                        CaptureRenderbufferStorageMultisample(
-                            replayState, true, GL_RENDERBUFFER, renderbuffer->getSamples(),
-                            internalformat, renderbuffer->getWidth(), renderbuffer->getHeight()));
-            }
-        }
-        else
-        {
-            for (std::vector<CallCapture> *calls : rbGenCalls)
-            {
-                Capture(calls, framebufferFuncs.renderbufferStorage(
-                                   replayState, true, GL_RENDERBUFFER, internalformat,
-                                   renderbuffer->getWidth(), renderbuffer->getHeight()));
-            }
+            case gl::MultisamplingMode::Regular:
+                if (renderbuffer->getSamples() > 0)
+                {
+                    for (std::vector<CallCapture> *calls : rbGenCalls)
+                    {
+                        Capture(calls, CaptureRenderbufferStorageMultisample(
+                                           replayState, true, GL_RENDERBUFFER,
+                                           renderbuffer->getSamples(), internalformat,
+                                           renderbuffer->getWidth(), renderbuffer->getHeight()));
+                    }
+                }
+                else
+                {
+                    for (std::vector<CallCapture> *calls : rbGenCalls)
+                    {
+                        Capture(calls, framebufferFuncs.renderbufferStorage(
+                                           replayState, true, GL_RENDERBUFFER, internalformat,
+                                           renderbuffer->getWidth(), renderbuffer->getHeight()));
+                    }
+                }
+                break;
+            case gl::MultisamplingMode::MultisampledRenderToTexture:
+                // Note we use getState().getSamples() here because MSRTT means this reports as
+                // single sampled, but was created with <n> samples internally, and we have to
+                // recreate that.
+                for (std::vector<CallCapture> *calls : rbGenCalls)
+                {
+                    Capture(calls, CaptureRenderbufferStorageMultisampleEXT(
+                                       replayState, true, GL_RENDERBUFFER,
+                                       renderbuffer->getState().getSamples(), internalformat,
+                                       renderbuffer->getWidth(), renderbuffer->getHeight()));
+                }
+                break;
+            default:
+                UNREACHABLE();
+                break;
         }
 
         // TODO: Capture renderbuffer contents. http://anglebug.com/42262323
@@ -4406,47 +4427,49 @@ void CaptureShareGroupMidExecutionSetup(
         gl::SamplerState defaultSamplerState;
         if (sampler->getMinFilter() != defaultSamplerState.getMinFilter())
         {
-            cap(CaptureSamplerParameteri(replayState, true, samplerID, GL_TEXTURE_MIN_FILTER,
-                                         sampler->getMinFilter()));
+            cap(CaptureSamplerParameteri(replayState, true, samplerID,
+                                         gl::SamplerParameter::MinFilter, sampler->getMinFilter()));
         }
         if (sampler->getMagFilter() != defaultSamplerState.getMagFilter())
         {
-            cap(CaptureSamplerParameteri(replayState, true, samplerID, GL_TEXTURE_MAG_FILTER,
-                                         sampler->getMagFilter()));
+            cap(CaptureSamplerParameteri(replayState, true, samplerID,
+                                         gl::SamplerParameter::MagFilter, sampler->getMagFilter()));
         }
         if (sampler->getWrapS() != defaultSamplerState.getWrapS())
         {
-            cap(CaptureSamplerParameteri(replayState, true, samplerID, GL_TEXTURE_WRAP_S,
+            cap(CaptureSamplerParameteri(replayState, true, samplerID, gl::SamplerParameter::WrapS,
                                          sampler->getWrapS()));
         }
         if (sampler->getWrapR() != defaultSamplerState.getWrapR())
         {
-            cap(CaptureSamplerParameteri(replayState, true, samplerID, GL_TEXTURE_WRAP_R,
+            cap(CaptureSamplerParameteri(replayState, true, samplerID, gl::SamplerParameter::WrapR,
                                          sampler->getWrapR()));
         }
         if (sampler->getWrapT() != defaultSamplerState.getWrapT())
         {
-            cap(CaptureSamplerParameteri(replayState, true, samplerID, GL_TEXTURE_WRAP_T,
+            cap(CaptureSamplerParameteri(replayState, true, samplerID, gl::SamplerParameter::WrapT,
                                          sampler->getWrapT()));
         }
         if (sampler->getMinLod() != defaultSamplerState.getMinLod())
         {
-            cap(CaptureSamplerParameterf(replayState, true, samplerID, GL_TEXTURE_MIN_LOD,
+            cap(CaptureSamplerParameterf(replayState, true, samplerID, gl::SamplerParameter::MinLod,
                                          sampler->getMinLod()));
         }
         if (sampler->getMaxLod() != defaultSamplerState.getMaxLod())
         {
-            cap(CaptureSamplerParameterf(replayState, true, samplerID, GL_TEXTURE_MAX_LOD,
+            cap(CaptureSamplerParameterf(replayState, true, samplerID, gl::SamplerParameter::MaxLod,
                                          sampler->getMaxLod()));
         }
         if (sampler->getCompareMode() != defaultSamplerState.getCompareMode())
         {
-            cap(CaptureSamplerParameteri(replayState, true, samplerID, GL_TEXTURE_COMPARE_MODE,
+            cap(CaptureSamplerParameteri(replayState, true, samplerID,
+                                         gl::SamplerParameter::CompareMode,
                                          sampler->getCompareMode()));
         }
         if (sampler->getCompareFunc() != defaultSamplerState.getCompareFunc())
         {
-            cap(CaptureSamplerParameteri(replayState, true, samplerID, GL_TEXTURE_COMPARE_FUNC,
+            cap(CaptureSamplerParameteri(replayState, true, samplerID,
+                                         gl::SamplerParameter::CompareFunc,
                                          sampler->getCompareFunc()));
         }
     }
@@ -4499,6 +4522,32 @@ void CaptureShareGroupMidExecutionSetup(
         cap(CapturePixelStorei(replayState, true, GL_UNPACK_ALIGNMENT, contextUnpackAlignment));
         replayState.getMutablePrivateStateForCapture()->setUnpackAlignment(contextUnpackAlignment);
     }
+}
+
+// Detects zombie bindings caused by texture ID reuse across shared contexts.
+// Zombie bindings may exist at capture-time but should not be added as part
+// of capture Setup(). See http://issuetracker.google.com/471189378.
+bool IsZombieTextureBinding(const gl::State &state,
+                            gl::TextureType type,
+                            size_t unit,
+                            gl::TextureID textureID)
+{
+    // Texture held by the context's specific hardware sampler slot
+    const gl::Texture *boundTexture = state.getSamplerTexture(static_cast<GLuint>(unit), type);
+
+    if (boundTexture)
+    {
+        uint64_t boundSerial = boundTexture->serial().getValue();
+
+        // Texture from the current Resource Manager state
+        const gl::TextureManager &textureManager = state.getTextureManagerForCapture();
+        const gl::Texture *currentTexture        = textureManager.getTexture(textureID);
+        uint64_t currentSerial                   = currentTexture->serial().getValue();
+
+        // If the ANGLE unique object IDs differ this object has been deleted
+        return (boundSerial != currentSerial);
+    }
+    return false;
 }
 
 void CaptureMidExecutionSetup(const gl::Context *context,
@@ -4667,6 +4716,13 @@ void CaptureMidExecutionSetup(const gl::Context *context,
 
             if (apiTextureID != replayTextureID)
             {
+                if (apiTextureID.value &&
+                    IsZombieTextureBinding(apiState, textureType, bindingIndex, apiTextureID))
+                {
+                    INFO() << "Skipping setup of partially deleted/unbound zombie texture.";
+                    continue;
+                }
+
                 if (replayState.getActiveSampler() != bindingIndex)
                 {
                     cap(CaptureActiveTexture(replayState, true,
@@ -6003,7 +6059,11 @@ void CoherentBuffer::removeProtection(PageSharingType sharingType)
 
 bool CoherentBufferTracker::canProtectDirectly(gl::Context *context)
 {
-    gl::BufferID bufferId = context->createBuffer();
+    gl::BufferID bufferId;
+    if (!context->createBuffer(&bufferId))
+    {
+        ERR() << "Failed to allocate buffer ID.";
+    }
 
     gl::BufferBinding targetPacked = gl::BufferBinding::Array;
     context->bindBuffer(targetPacked, bufferId);
@@ -6378,7 +6438,8 @@ void FrameCaptureShared::trackBufferMapping(const gl::Context *context,
                                             GLintptr offset,
                                             GLsizeiptr length,
                                             bool writable,
-                                            bool coherent)
+                                            bool coherent,
+                                            bool persistent)
 {
     // Track that the buffer was mapped
     mResourceTracker.setBufferMapped(context->id(), id.value);
@@ -6397,11 +6458,18 @@ void FrameCaptureShared::trackBufferMapping(const gl::Context *context,
         // Track coherent buffer
         // Check if capture is active to not initialize the coherent buffer tracker on the
         // first coherent glMapBufferRange call.
-        if (coherent && isCaptureActive())
+        if ((coherent || persistent) && isCaptureActive())
         {
             if (mCoherentBufferTracker.hasBeenReset())
             {
                 FATAL() << "Multi-capture not supprted for apps using persistent coherent memory";
+            }
+
+            // To allow for incomplete synchronization seen in popular apps, treat persistent
+            // writable memory as coherent. See http://issuetracker.google.com/460704266.
+            if (!coherent)
+            {
+                WARN() << "Treating persistent, non-coherent buffer " << id.value << " as coherent";
             }
 
             mCoherentBufferTracker.enable();
@@ -6718,7 +6786,8 @@ void FrameCaptureShared::captureCustomMapBufferFromContext(const gl::Context *co
             call.params.getParam("access", ParamType::TGLbitfield, 3).value.GLbitfieldVal;
 
         trackBufferMapping(context, &call, buffer->id(), buffer, offset, length,
-                           access & GL_MAP_WRITE_BIT, access & GL_MAP_COHERENT_BIT_EXT);
+                           access & GL_MAP_WRITE_BIT, access & GL_MAP_COHERENT_BIT_EXT,
+                           access & GL_MAP_PERSISTENT_BIT_EXT);
     }
     else
     {
@@ -6727,7 +6796,7 @@ void FrameCaptureShared::captureCustomMapBufferFromContext(const gl::Context *co
         bool writeAccess =
             (access == GL_WRITE_ONLY_OES || access == GL_WRITE_ONLY || access == GL_READ_WRITE);
         trackBufferMapping(context, &call, buffer->id(), buffer, 0,
-                           static_cast<GLsizeiptr>(buffer->getSize()), writeAccess, false);
+                           static_cast<GLsizeiptr>(buffer->getSize()), writeAccess, false, false);
     }
 
     CaptureCustomMapBuffer(entryPointName, call, callsOut, buffer->id());
@@ -7035,11 +7104,12 @@ void FrameCaptureShared::maybeCapturePreCallUpdates(
 
             if (call.params.hasClientArrayData())
             {
-                mClientVertexArrayMap[index] = static_cast<int>(mFrameCalls.size());
+                mClientVertexArrayData[index] =
+                    call.params.getClientArrayPointerParameter().value.voidConstPointerVal;
             }
             else
             {
-                mClientVertexArrayMap[index] = -1;
+                mClientVertexArrayData[index] = nullptr;
             }
             break;
         }
@@ -7424,7 +7494,7 @@ void FrameCaptureShared::maybeCapturePreCallUpdates(
             FrameCaptureShared *frameCaptureShared =
                 context->getShareGroup()->getFrameCaptureShared();
             frameCaptureShared->trackBufferMapping(context, &call, buffer->id(), buffer, offset,
-                                                   length, writable, false);
+                                                   length, writable, false, false);
             break;
         }
 
@@ -7555,14 +7625,6 @@ void FrameCaptureShared::maybeCapturePreCallUpdates(
             break;
         }
         case EntryPoint::GLBlendFunc:
-        {
-            if (isCaptureActive())
-            {
-                context->getFrameCapture()->getStateResetHelper().setEntryPointDirty(
-                    EntryPoint::GLBlendFunc);
-            }
-            break;
-        }
         case EntryPoint::GLBlendFuncSeparate:
         {
             if (isCaptureActive())
@@ -7801,11 +7863,24 @@ void FrameCaptureShared::updateResourceCountsFromParamCapture(const ParamCapture
     {
         mHasResourceType.set(idType);
 
+        // Lambda to update the max accessed resource if ID was valid
+        auto updateMaxAccessedID = [&](GLuint id) -> void {
+            // We could check each ID using calls like isHandleGenerated or Context::isTexture,
+            // but let's keep it simple (and fast) for now.
+            constexpr unsigned int kMaxTrackedResourceID = 1000000;
+            if (id >= kMaxTrackedResourceID)
+            {
+                INFO() << "Not tracking potentially invalid resourceID (" << id << ") for idType "
+                       << GetResourceIDTypeName(idType);
+                return;
+            }
+            mMaxAccessedResourceIDs[idType] = std::max(mMaxAccessedResourceIDs[idType], id);
+        };
+
         // Capture resource IDs for non-pointer types.
         if (strcmp(ParamTypeToString(param.type), "GLuint") == 0)
         {
-            mMaxAccessedResourceIDs[idType] =
-                std::max(mMaxAccessedResourceIDs[idType], param.value.GLuintVal);
+            updateMaxAccessedID(param.value.GLuintVal);
         }
         // Capture resource IDs for pointer types.
         if (strstr(ParamTypeToString(param.type), "GLuint *") != nullptr)
@@ -7816,15 +7891,13 @@ void FrameCaptureShared::updateResourceCountsFromParamCapture(const ParamCapture
                 size_t numHandles     = param.data[0].size() / sizeof(GLuint);
                 for (size_t handleIndex = 0; handleIndex < numHandles; ++handleIndex)
                 {
-                    mMaxAccessedResourceIDs[idType] =
-                        std::max(mMaxAccessedResourceIDs[idType], dataPtr[handleIndex]);
+                    updateMaxAccessedID(dataPtr[handleIndex]);
                 }
             }
         }
         if (idType == ResourceIDType::Sync)
         {
-            mMaxAccessedResourceIDs[idType] =
-                std::max(mMaxAccessedResourceIDs[idType], param.value.GLuintVal);
+            updateMaxAccessedID(param.value.GLuintVal);
         }
     }
 }
@@ -8088,9 +8161,9 @@ void FrameCaptureShared::captureClientArraySnapshot(const gl::Context *context,
         const gl::VertexAttribute &attrib = vao->getVertexAttribute(attribIndex);
         const gl::VertexBinding &binding  = vao->getVertexBinding(attrib.bindingIndex);
 
-        int callIndex = mClientVertexArrayMap[attribIndex];
+        const void *clientSideAddress = mClientVertexArrayData[attribIndex];
 
-        if (callIndex != -1)
+        if (clientSideAddress)
         {
             size_t count = vertexCount;
 
@@ -8103,16 +8176,12 @@ void FrameCaptureShared::captureClientArraySnapshot(const gl::Context *context,
             // The last capture element doesn't take up the full stride.
             size_t bytesToCapture = (count - 1) * binding.getStride() + attrib.format->pixelBytes;
 
-            CallCapture &call   = mFrameCalls[callIndex];
-            ParamCapture &param = call.params.getClientArrayPointerParameter();
-            ASSERT(param.type == ParamType::TvoidConstPointer);
-
             ParamBuffer updateParamBuffer;
             updateParamBuffer.addValueParam<GLint>("arrayIndex", ParamType::TGLint,
                                                    static_cast<uint32_t>(attribIndex));
 
             ParamCapture updateMemory("pointer", ParamType::TvoidConstPointer);
-            CaptureMemory(param.value.voidConstPointerVal, bytesToCapture, &updateMemory);
+            CaptureMemory(clientSideAddress, bytesToCapture, &updateMemory);
             updateParamBuffer.addParam(std::move(updateMemory));
 
             updateParamBuffer.addValueParam<GLuint64>("size", ParamType::TGLuint64, bytesToCapture);
@@ -8402,6 +8471,10 @@ void FrameCaptureShared::onEndFrame(gl::Context *context)
     if (!enabled() || mFrameIndex > mCaptureEndFrame)
     {
         setCaptureInactive();
+
+        // Note: If this call were deferred until shutdown, multi-capture could be
+        // supported for traces using persistent/coherent mapped memory, see
+        // http://issuetracker.google.com/394107532
         mCoherentBufferTracker.onEndFrame();
         if (enabled())
         {
@@ -8566,19 +8639,25 @@ void StateResetHelper::setDefaultResetCalls(const gl::Context *context,
             break;
         }
         case angle::EntryPoint::GLBlendFunc:
-        {
-            Capture(&mResetCalls[angle::EntryPoint::GLBlendFunc],
-                    CaptureBlendFunc(context->getState(), true, kDefaultBlendState.sourceBlendRGB,
-                                     kDefaultBlendState.destBlendRGB));
-            break;
-        }
         case angle::EntryPoint::GLBlendFuncSeparate:
         {
-            Capture(&mResetCalls[angle::EntryPoint::GLBlendFuncSeparate],
-                    CaptureBlendFuncSeparate(
-                        context->getState(), true, kDefaultBlendState.sourceBlendRGB,
-                        kDefaultBlendState.destBlendRGB, kDefaultBlendState.sourceBlendAlpha,
-                        kDefaultBlendState.destBlendAlpha));
+            // Though BlendFunc state tracking is unified, exclusively use BlendFuncSeparate for
+            // non-GLES1 apps as it covers all cases
+            if (context->isGLES1())
+            {
+                Capture(
+                    &mResetCalls[angle::EntryPoint::GLBlendFunc],
+                    CaptureBlendFunc(context->getState(), true, kDefaultBlendState.sourceBlendRGB,
+                                     kDefaultBlendState.destBlendRGB));
+            }
+            else
+            {
+                Capture(&mResetCalls[angle::EntryPoint::GLBlendFuncSeparate],
+                        CaptureBlendFuncSeparate(
+                            context->getState(), true, kDefaultBlendState.sourceBlendRGB,
+                            kDefaultBlendState.destBlendRGB, kDefaultBlendState.sourceBlendAlpha,
+                            kDefaultBlendState.destBlendAlpha));
+            }
             break;
         }
         case angle::EntryPoint::GLBlendEquation:
@@ -8846,6 +8925,7 @@ void FrameCaptureShared::writeJSON(const gl::Context *context)
     json.addBool("IsBindGeneratesResourcesEnabled", glState.isBindGeneratesResourceEnabled());
     json.addBool("IsWebGLCompatibilityEnabled", glState.isWebGL());
     json.addBool("IsRobustResourceInitEnabled", glState.isRobustResourceInitEnabled());
+    json.addBool("AreExtensionsEnabled", context->getExtensionsEnabled());
     json.endGroup();
 
     json.startGroup("BinaryMetadata");
@@ -9384,9 +9464,9 @@ gl::Program *GetProgramForCapture(const gl::State &glState, gl::ShaderProgramID 
 }
 
 void CaptureGetActiveUniformBlockivParameters(const gl::State &glState,
-                                              gl::ShaderProgramID handle,
-                                              gl::UniformBlockIndex uniformBlockIndex,
-                                              GLenum pname,
+                                              gl::ShaderProgramID programPacked,
+                                              gl::UniformBlockIndex uniformBlockIndexPacked,
+                                              gl::UniformBlockParameter pnamePacked,
                                               ParamCapture *paramCapture)
 {
     int numParams = 1;
@@ -9396,13 +9476,14 @@ void CaptureGetActiveUniformBlockivParameters(const gl::State &glState,
     // active uniform indices for the uniform block identified by uniformBlockIndex is
     // returned. The number of elements that will be written to params is the value of
     // UNIFORM_BLOCK_ACTIVE_UNIFORMS for uniformBlockIndex
-    if (pname == GL_UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES)
+    if (pnamePacked == gl::UniformBlockParameter::ActiveUniformIndices)
     {
-        gl::Program *program = GetProgramForCapture(glState, handle);
-        if (program)
+        gl::Program *programObject = GetProgramForCapture(glState, programPacked);
+        if (programObject != nullptr)
         {
-            gl::QueryActiveUniformBlockiv(program, uniformBlockIndex,
-                                          GL_UNIFORM_BLOCK_ACTIVE_UNIFORMS, &numParams);
+            gl::QueryActiveUniformBlockiv(programObject, uniformBlockIndexPacked,
+                                          gl::UniformBlockParameter::ActiveUniforms, nullptr,
+                                          &numParams);
         }
     }
 

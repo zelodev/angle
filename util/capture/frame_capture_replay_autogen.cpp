@@ -390,14 +390,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                                    captures[6].value.GLsizeiVal,
                                    captures[7].value.voidConstPointerVal);
             break;
-        case angle::EntryPoint::GLCompressedTexImage2DRobustANGLE:
-            glCompressedTexImage2DRobustANGLE(
-                captures[0].value.GLenumVal, captures[1].value.GLintVal,
-                captures[2].value.GLenumVal, captures[3].value.GLsizeiVal,
-                captures[4].value.GLsizeiVal, captures[5].value.GLintVal,
-                captures[6].value.GLsizeiVal, captures[7].value.GLsizeiVal,
-                captures[8].value.voidConstPointerVal);
-            break;
         case angle::EntryPoint::GLCompressedTexImage3D:
             glCompressedTexImage3D(captures[0].value.GLenumVal, captures[1].value.GLintVal,
                                    captures[2].value.GLenumVal, captures[3].value.GLsizeiVal,
@@ -412,28 +404,12 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                                       captures[6].value.GLintVal, captures[7].value.GLsizeiVal,
                                       captures[8].value.voidConstPointerVal);
             break;
-        case angle::EntryPoint::GLCompressedTexImage3DRobustANGLE:
-            glCompressedTexImage3DRobustANGLE(
-                captures[0].value.GLenumVal, captures[1].value.GLintVal,
-                captures[2].value.GLenumVal, captures[3].value.GLsizeiVal,
-                captures[4].value.GLsizeiVal, captures[5].value.GLsizeiVal,
-                captures[6].value.GLintVal, captures[7].value.GLsizeiVal,
-                captures[8].value.GLsizeiVal, captures[9].value.voidConstPointerVal);
-            break;
         case angle::EntryPoint::GLCompressedTexSubImage2D:
             glCompressedTexSubImage2D(captures[0].value.GLenumVal, captures[1].value.GLintVal,
                                       captures[2].value.GLintVal, captures[3].value.GLintVal,
                                       captures[4].value.GLsizeiVal, captures[5].value.GLsizeiVal,
                                       captures[6].value.GLenumVal, captures[7].value.GLsizeiVal,
                                       captures[8].value.voidConstPointerVal);
-            break;
-        case angle::EntryPoint::GLCompressedTexSubImage2DRobustANGLE:
-            glCompressedTexSubImage2DRobustANGLE(
-                captures[0].value.GLenumVal, captures[1].value.GLintVal,
-                captures[2].value.GLsizeiVal, captures[3].value.GLsizeiVal,
-                captures[4].value.GLsizeiVal, captures[5].value.GLsizeiVal,
-                captures[6].value.GLenumVal, captures[7].value.GLsizeiVal,
-                captures[8].value.GLsizeiVal, captures[9].value.voidConstPointerVal);
             break;
         case angle::EntryPoint::GLCompressedTexSubImage3D:
             glCompressedTexSubImage3D(captures[0].value.GLenumVal, captures[1].value.GLintVal,
@@ -450,15 +426,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                                          captures[6].value.GLsizeiVal, captures[7].value.GLsizeiVal,
                                          captures[8].value.GLenumVal, captures[9].value.GLsizeiVal,
                                          captures[10].value.voidConstPointerVal);
-            break;
-        case angle::EntryPoint::GLCompressedTexSubImage3DRobustANGLE:
-            glCompressedTexSubImage3DRobustANGLE(
-                captures[0].value.GLenumVal, captures[1].value.GLintVal, captures[2].value.GLintVal,
-                captures[3].value.GLintVal, captures[4].value.GLintVal,
-                captures[5].value.GLsizeiVal, captures[6].value.GLsizeiVal,
-                captures[7].value.GLsizeiVal, captures[8].value.GLenumVal,
-                captures[9].value.GLsizeiVal, captures[10].value.GLsizeiVal,
-                captures[11].value.voidConstPointerVal);
             break;
         case angle::EntryPoint::GLCopyBufferSubData:
             glCopyBufferSubData(captures[0].value.GLenumVal, captures[1].value.GLenumVal,
@@ -714,9 +681,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
         case angle::EntryPoint::GLDisableClientState:
             glDisableClientState(captures[0].value.GLenumVal);
             break;
-        case angle::EntryPoint::GLDisableExtensionANGLE:
-            glDisableExtensionANGLE(captures[0].value.GLcharConstPointerVal);
-            break;
         case angle::EntryPoint::GLDisableVertexAttribArray:
             glDisableVertexAttribArray(captures[0].value.GLuintVal);
             break;
@@ -956,6 +920,9 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
             glEndPixelLocalStorageANGLE(captures[0].value.GLsizeiVal,
                                         captures[1].value.GLenumConstPointerVal);
             break;
+        case angle::EntryPoint::GLEndPixelLocalStorageImplicitANGLE:
+            glEndPixelLocalStorageImplicitANGLE();
+            break;
         case angle::EntryPoint::GLEndQuery:
             glEndQuery(captures[0].value.GLenumVal);
             break;
@@ -1018,7 +985,8 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
             break;
         case angle::EntryPoint::GLFramebufferMemorylessPixelLocalStorageANGLE:
             glFramebufferMemorylessPixelLocalStorageANGLE(captures[0].value.GLintVal,
-                                                          captures[1].value.GLenumVal);
+                                                          captures[1].value.GLenumVal,
+                                                          captures[2].value.GLbitfieldVal);
             break;
         case angle::EntryPoint::GLFramebufferParameteri:
             glFramebufferParameteri(captures[0].value.GLenumVal, captures[1].value.GLenumVal,
@@ -1101,6 +1069,13 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                                       gTextureMap[captures[2].value.GLuintVal],
                                       captures[3].value.GLintVal, captures[4].value.GLintVal);
             break;
+        case angle::EntryPoint::GLFramebufferTextureMultisampleMultiviewOVR:
+            glFramebufferTextureMultisampleMultiviewOVR(
+                captures[0].value.GLenumVal, captures[1].value.GLenumVal,
+                gTextureMap[captures[2].value.GLuintVal], captures[3].value.GLintVal,
+                captures[4].value.GLsizeiVal, captures[5].value.GLintVal,
+                captures[6].value.GLsizeiVal);
+            break;
         case angle::EntryPoint::GLFramebufferTextureMultiviewOVR:
             glFramebufferTextureMultiviewOVR(
                 captures[0].value.GLenumVal, captures[1].value.GLenumVal,
@@ -1115,7 +1090,8 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
         case angle::EntryPoint::GLFramebufferTexturePixelLocalStorageANGLE:
             glFramebufferTexturePixelLocalStorageANGLE(
                 captures[0].value.GLintVal, gTextureMap[captures[1].value.GLuintVal],
-                captures[2].value.GLintVal, captures[3].value.GLintVal);
+                captures[2].value.GLintVal, captures[3].value.GLintVal,
+                captures[4].value.GLbitfieldVal);
             break;
         case angle::EntryPoint::GLFrontFace:
             glFrontFace(captures[0].value.GLenumVal);
@@ -1239,12 +1215,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
             glGetBooleani_v(captures[0].value.GLenumVal, captures[1].value.GLuintVal,
                             captures[2].value.GLbooleanPointerVal);
             break;
-        case angle::EntryPoint::GLGetBooleani_vRobustANGLE:
-            glGetBooleani_vRobustANGLE(captures[0].value.GLenumVal, captures[1].value.GLuintVal,
-                                       captures[2].value.GLsizeiVal,
-                                       captures[3].value.GLsizeiPointerVal,
-                                       captures[4].value.GLbooleanPointerVal);
-            break;
         case angle::EntryPoint::GLGetBooleanv:
             glGetBooleanv(captures[0].value.GLenumVal, captures[1].value.GLbooleanPointerVal);
             break;
@@ -1367,12 +1337,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                                             captures[1].value.GLenumVal,
                                             captures[2].value.GLintPointerVal);
             break;
-        case angle::EntryPoint::GLGetFramebufferParameterivRobustANGLE:
-            glGetFramebufferParameterivRobustANGLE(
-                captures[0].value.GLenumVal, captures[1].value.GLenumVal,
-                captures[2].value.GLsizeiVal, captures[3].value.GLsizeiPointerVal,
-                captures[4].value.GLintPointerVal);
-            break;
         case angle::EntryPoint::GLGetFramebufferPixelLocalStorageParameterfvANGLE:
             glGetFramebufferPixelLocalStorageParameterfvANGLE(captures[0].value.GLintVal,
                                                               captures[1].value.GLenumVal,
@@ -1394,6 +1358,17 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                 captures[0].value.GLintVal, captures[1].value.GLenumVal,
                 captures[2].value.GLsizeiVal, captures[3].value.GLsizeiPointerVal,
                 captures[4].value.GLintPointerVal);
+            break;
+        case angle::EntryPoint::GLGetFramebufferPixelLocalStorageParameteruivANGLE:
+            glGetFramebufferPixelLocalStorageParameteruivANGLE(captures[0].value.GLintVal,
+                                                               captures[1].value.GLenumVal,
+                                                               captures[2].value.GLuintPointerVal);
+            break;
+        case angle::EntryPoint::GLGetFramebufferPixelLocalStorageParameteruivRobustANGLE:
+            glGetFramebufferPixelLocalStorageParameteruivRobustANGLE(
+                captures[0].value.GLintVal, captures[1].value.GLenumVal,
+                captures[2].value.GLsizeiVal, captures[3].value.GLsizeiPointerVal,
+                captures[4].value.GLuintPointerVal);
             break;
         case angle::EntryPoint::GLGetGraphicsResetStatus:
             glGetGraphicsResetStatus();
@@ -1557,11 +1532,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
         case angle::EntryPoint::GLGetPointervKHR:
             glGetPointervKHR(captures[0].value.GLenumVal, captures[1].value.voidPointerPointerVal);
             break;
-        case angle::EntryPoint::GLGetPointervRobustANGLERobustANGLE:
-            glGetPointervRobustANGLERobustANGLE(
-                captures[0].value.GLenumVal, captures[1].value.GLsizeiVal,
-                captures[2].value.GLsizeiPointerVal, captures[3].value.voidPointerPointerVal);
-            break;
         case angle::EntryPoint::GLGetProgramBinary:
             glGetProgramBinary(gShaderProgramMap[captures[0].value.GLuintVal],
                                captures[1].value.GLsizeiVal, captures[2].value.GLsizeiPointerVal,
@@ -1583,12 +1553,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
             glGetProgramInterfaceiv(gShaderProgramMap[captures[0].value.GLuintVal],
                                     captures[1].value.GLenumVal, captures[2].value.GLenumVal,
                                     captures[3].value.GLintPointerVal);
-            break;
-        case angle::EntryPoint::GLGetProgramInterfaceivRobustANGLE:
-            glGetProgramInterfaceivRobustANGLE(
-                gShaderProgramMap[captures[0].value.GLuintVal], captures[1].value.GLenumVal,
-                captures[2].value.GLenumVal, captures[3].value.GLsizeiVal,
-                captures[4].value.GLsizeiPointerVal, captures[5].value.GLintPointerVal);
             break;
         case angle::EntryPoint::GLGetProgramPipelineInfoLog:
             glGetProgramPipelineInfoLog(
@@ -1742,12 +1706,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                                         captures[1].value.GLenumVal,
                                         captures[2].value.GLintPointerVal);
             break;
-        case angle::EntryPoint::GLGetSamplerParameterIivRobustANGLE:
-            glGetSamplerParameterIivRobustANGLE(
-                gSamplerMap[captures[0].value.GLuintVal], captures[1].value.GLenumVal,
-                captures[2].value.GLsizeiVal, captures[3].value.GLsizeiPointerVal,
-                captures[4].value.GLintPointerVal);
-            break;
         case angle::EntryPoint::GLGetSamplerParameterIuiv:
             glGetSamplerParameterIuiv(gSamplerMap[captures[0].value.GLuintVal],
                                       captures[1].value.GLenumVal,
@@ -1762,12 +1720,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
             glGetSamplerParameterIuivOES(gSamplerMap[captures[0].value.GLuintVal],
                                          captures[1].value.GLenumVal,
                                          captures[2].value.GLuintPointerVal);
-            break;
-        case angle::EntryPoint::GLGetSamplerParameterIuivRobustANGLE:
-            glGetSamplerParameterIuivRobustANGLE(
-                gSamplerMap[captures[0].value.GLuintVal], captures[1].value.GLenumVal,
-                captures[2].value.GLsizeiVal, captures[3].value.GLsizeiPointerVal,
-                captures[4].value.GLuintPointerVal);
             break;
         case angle::EntryPoint::GLGetSamplerParameterfv:
             glGetSamplerParameterfv(gSamplerMap[captures[0].value.GLuintVal],
@@ -1904,12 +1856,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
             glGetTexParameterIivOES(captures[0].value.GLenumVal, captures[1].value.GLenumVal,
                                     captures[2].value.GLintPointerVal);
             break;
-        case angle::EntryPoint::GLGetTexParameterIivRobustANGLE:
-            glGetTexParameterIivRobustANGLE(
-                captures[0].value.GLenumVal, captures[1].value.GLenumVal,
-                captures[2].value.GLsizeiVal, captures[3].value.GLsizeiPointerVal,
-                captures[4].value.GLintPointerVal);
-            break;
         case angle::EntryPoint::GLGetTexParameterIuiv:
             glGetTexParameterIuiv(captures[0].value.GLenumVal, captures[1].value.GLenumVal,
                                   captures[2].value.GLuintPointerVal);
@@ -1921,12 +1867,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
         case angle::EntryPoint::GLGetTexParameterIuivOES:
             glGetTexParameterIuivOES(captures[0].value.GLenumVal, captures[1].value.GLenumVal,
                                      captures[2].value.GLuintPointerVal);
-            break;
-        case angle::EntryPoint::GLGetTexParameterIuivRobustANGLE:
-            glGetTexParameterIuivRobustANGLE(
-                captures[0].value.GLenumVal, captures[1].value.GLenumVal,
-                captures[2].value.GLsizeiVal, captures[3].value.GLsizeiPointerVal,
-                captures[4].value.GLuintPointerVal);
             break;
         case angle::EntryPoint::GLGetTexParameterfv:
             glGetTexParameterfv(captures[0].value.GLenumVal, captures[1].value.GLenumVal,
@@ -2094,14 +2034,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                                                 [captures[1].value.GLintVal],
                                captures[2].value.GLsizeiVal, captures[3].value.GLfloatPointerVal);
             break;
-        case angle::EntryPoint::GLGetnUniformfvRobustANGLE:
-            glGetnUniformfvRobustANGLE(gShaderProgramMap[captures[0].value.GLuintVal],
-                                       gUniformLocations[gCurrentProgramPerContext[gCurrentContext]]
-                                                        [captures[1].value.GLintVal],
-                                       captures[2].value.GLsizeiVal,
-                                       captures[3].value.GLsizeiPointerVal,
-                                       captures[4].value.GLfloatPointerVal);
-            break;
         case angle::EntryPoint::GLGetnUniformiv:
             glGetnUniformiv(gShaderProgramMap[captures[0].value.GLuintVal],
                             gUniformLocations[gCurrentProgramPerContext[gCurrentContext]]
@@ -2120,14 +2052,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                                                 [captures[1].value.GLintVal],
                                captures[2].value.GLsizeiVal, captures[3].value.GLintPointerVal);
             break;
-        case angle::EntryPoint::GLGetnUniformivRobustANGLE:
-            glGetnUniformivRobustANGLE(gShaderProgramMap[captures[0].value.GLuintVal],
-                                       gUniformLocations[gCurrentProgramPerContext[gCurrentContext]]
-                                                        [captures[1].value.GLintVal],
-                                       captures[2].value.GLsizeiVal,
-                                       captures[3].value.GLsizeiPointerVal,
-                                       captures[4].value.GLintPointerVal);
-            break;
         case angle::EntryPoint::GLGetnUniformuiv:
             glGetnUniformuiv(gShaderProgramMap[captures[0].value.GLuintVal],
                              gUniformLocations[gCurrentProgramPerContext[gCurrentContext]]
@@ -2139,14 +2063,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                                 gUniformLocations[gCurrentProgramPerContext[gCurrentContext]]
                                                  [captures[1].value.GLintVal],
                                 captures[2].value.GLsizeiVal, captures[3].value.GLuintPointerVal);
-            break;
-        case angle::EntryPoint::GLGetnUniformuivRobustANGLE:
-            glGetnUniformuivRobustANGLE(
-                gShaderProgramMap[captures[0].value.GLuintVal],
-                gUniformLocations[gCurrentProgramPerContext[gCurrentContext]]
-                                 [captures[1].value.GLintVal],
-                captures[2].value.GLsizeiVal, captures[3].value.GLsizeiPointerVal,
-                captures[4].value.GLuintPointerVal);
             break;
         case angle::EntryPoint::GLHint:
             glHint(captures[0].value.GLenumVal, captures[1].value.GLenumVal);
@@ -3127,15 +3043,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                              captures[4].value.GLenumVal, captures[5].value.GLenumVal,
                              captures[6].value.GLsizeiVal, captures[7].value.voidPointerVal);
             break;
-        case angle::EntryPoint::GLReadnPixelsRobustANGLE:
-            glReadnPixelsRobustANGLE(
-                captures[0].value.GLintVal, captures[1].value.GLintVal,
-                captures[2].value.GLsizeiVal, captures[3].value.GLsizeiVal,
-                captures[4].value.GLenumVal, captures[5].value.GLenumVal,
-                captures[6].value.GLsizeiVal, captures[7].value.GLsizeiPointerVal,
-                captures[8].value.GLsizeiPointerVal, captures[9].value.GLsizeiPointerVal,
-                captures[10].value.voidPointerVal);
-            break;
         case angle::EntryPoint::GLReleaseShaderCompiler:
             glReleaseShaderCompiler();
             break;
@@ -3211,11 +3118,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
                                      captures[1].value.GLenumVal,
                                      captures[2].value.GLintConstPointerVal);
             break;
-        case angle::EntryPoint::GLSamplerParameterIivRobustANGLE:
-            glSamplerParameterIivRobustANGLE(
-                gSamplerMap[captures[0].value.GLuintVal], captures[1].value.GLenumVal,
-                captures[2].value.GLsizeiVal, captures[3].value.GLintConstPointerVal);
-            break;
         case angle::EntryPoint::GLSamplerParameterIuiv:
             glSamplerParameterIuiv(gSamplerMap[captures[0].value.GLuintVal],
                                    captures[1].value.GLenumVal,
@@ -3230,11 +3132,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
             glSamplerParameterIuivOES(gSamplerMap[captures[0].value.GLuintVal],
                                       captures[1].value.GLenumVal,
                                       captures[2].value.GLuintConstPointerVal);
-            break;
-        case angle::EntryPoint::GLSamplerParameterIuivRobustANGLE:
-            glSamplerParameterIuivRobustANGLE(
-                gSamplerMap[captures[0].value.GLuintVal], captures[1].value.GLenumVal,
-                captures[2].value.GLsizeiVal, captures[3].value.GLuintConstPointerVal);
             break;
         case angle::EntryPoint::GLSamplerParameterf:
             glSamplerParameterf(gSamplerMap[captures[0].value.GLuintVal],
@@ -3483,11 +3380,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
             glTexParameterIivOES(captures[0].value.GLenumVal, captures[1].value.GLenumVal,
                                  captures[2].value.GLintConstPointerVal);
             break;
-        case angle::EntryPoint::GLTexParameterIivRobustANGLE:
-            glTexParameterIivRobustANGLE(captures[0].value.GLenumVal, captures[1].value.GLenumVal,
-                                         captures[2].value.GLsizeiVal,
-                                         captures[3].value.GLintConstPointerVal);
-            break;
         case angle::EntryPoint::GLTexParameterIuiv:
             glTexParameterIuiv(captures[0].value.GLenumVal, captures[1].value.GLenumVal,
                                captures[2].value.GLuintConstPointerVal);
@@ -3499,11 +3391,6 @@ void ReplayTraceFunctionCall(const CallCapture &call, const TraceFunctionMap &cu
         case angle::EntryPoint::GLTexParameterIuivOES:
             glTexParameterIuivOES(captures[0].value.GLenumVal, captures[1].value.GLenumVal,
                                   captures[2].value.GLuintConstPointerVal);
-            break;
-        case angle::EntryPoint::GLTexParameterIuivRobustANGLE:
-            glTexParameterIuivRobustANGLE(captures[0].value.GLenumVal, captures[1].value.GLenumVal,
-                                          captures[2].value.GLsizeiVal,
-                                          captures[3].value.GLuintConstPointerVal);
             break;
         case angle::EntryPoint::GLTexParameterf:
             glTexParameterf(captures[0].value.GLenumVal, captures[1].value.GLenumVal,

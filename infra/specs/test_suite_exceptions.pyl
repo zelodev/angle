@@ -14,13 +14,13 @@
   'angle_deqp_egl_vulkan_tests': {
     'remove_from': [
       # Occasionally hangs the machine http://anglebug.com/368553850
-      'linux-exp-nvidia',
+      'angle-linux-x64-nvidia-gtx1660-rel',
     ],
   },
   'angle_deqp_gles2_d3d11_tests': {
     'modifications': {
       # anglebug.com/352528974 suspecting OOM caused by multiprocess
-      'win10-x64-exp-intel': {
+      'angle-win-x64-intel-uhd770-rel': {
         'args': [
           '--max-processes=2',
         ],
@@ -29,8 +29,17 @@
   },
   'angle_end2end_tests': {
     'modifications': {
+      # anglebug.com/40644897 suspecting device lost caused by multiprocess
+      'angle-win-x64-intel-uhd630-rel': {
+        'args': [
+          '--max-processes=1',
+        ],
+        'swarming': {
+          'shards': 10,
+        },
+      },
       # anglebug.com/352528974 suspecting OOM caused by multiprocess
-      'win10-x64-exp-intel': {
+      'angle-win-x64-intel-uhd770-rel': {
         'args': [
           '--max-processes=2',
         ],
@@ -39,7 +48,7 @@
         },
       },
       # anglebug.com/40644897 suspecting device lost caused by multiprocess
-      'win10-x64-intel': {
+      'win10-x64-ir-intel': {
         'args': [
           '--max-processes=1',
         ],
@@ -50,7 +59,13 @@
     },
     'replacements': {
       # anglebug.com/408276172 suspecting WebGPU backend flakiness caused by multiprocess
-      'linux-intel': {
+      'angle-linux-x64-intel-uhd630-rel': {
+        'args': {
+          '--max-processes': '1',
+        },
+      },
+      # anglebug.com/408276172 suspecting WebGPU backend flakiness caused by multiprocess
+      'linux-ir-intel': {
         'args': {
           '--max-processes': '1',
         },
@@ -69,12 +84,21 @@
   },
   'angle_restricted_trace_gold_tests': {
     'modifications': {
-      'win10-x64-exp-intel': {
+      'angle-win-x64-intel-uhd630-rel': {
+        # anglebug.com/42263955 flaky 4x8 pixel artifacts on Win Intel
+        'args': [
+          '--flaky-retries=1',
+        ],
+        'swarming': {
+          'shards': 5,
+        },
+      },
+      'angle-win-x64-intel-uhd770-rel': {
         'swarming': {
           'shards': 4,
         },
       },
-      'win10-x64-intel': {
+      'win10-x64-ir-intel': {
         # anglebug.com/42263955 flaky 4x8 pixel artifacts on Win Intel
         'args': [
           '--flaky-retries=1',
@@ -84,12 +108,6 @@
         },
       },
     },
-  },
-  'angle_trace_interpreter_tests': {
-    'remove_from': [
-      # TODO: Implement on Android. http://anglebug.com/42266248
-      'android-arm64-pixel4',
-    ],
   },
   'angle_trace_perf_native_tests': {
     'modifications': {
@@ -109,12 +127,17 @@
           '--custom-throttling-temp=38',
         ],
       },
-      'win10-x64-exp-intel': {
+      'angle-win-x64-intel-uhd630-rel': {
+        'swarming': {
+          'shards': 3,
+        },
+      },
+      'angle-win-x64-intel-uhd770-rel': {
         'swarming': {
           'shards': 4,
         },
       },
-      'win10-x64-intel': {
+      'win10-x64-ir-intel': {
         'swarming': {
           'shards': 3,
         },
@@ -124,7 +147,13 @@
   'angle_white_box_tests': {
     'modifications': {
       # anglebug.com/40644897 suspecting device lost caused by multiprocess
-      'win10-x64-intel': {
+      'angle-win-x64-intel-uhd630-rel': {
+        'args': [
+          '--max-processes=1',
+        ],
+      },
+      # anglebug.com/40644897 suspecting device lost caused by multiprocess
+      'win10-x64-ir-intel': {
         'args': [
           '--max-processes=1',
         ],

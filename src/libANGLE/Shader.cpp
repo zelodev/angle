@@ -19,6 +19,7 @@
 
 #include "GLSLANG/ShaderLang.h"
 #include "common/angle_version_info.h"
+#include "common/span_util.h"
 #include "common/string_utils.h"
 #include "common/system_utils.h"
 #include "common/utilities.h"
@@ -26,6 +27,7 @@
 #include "libANGLE/Compiler.h"
 #include "libANGLE/Constants.h"
 #include "libANGLE/Context.h"
+#include "libANGLE/Debug.h"
 #include "libANGLE/Display.h"
 #include "libANGLE/MemoryShaderCache.h"
 #include "libANGLE/Program.h"
@@ -65,6 +67,24 @@ std::string GetShaderDumpFilePath(size_t shaderHash, const char *suffix)
     return path.str();
 }
 
+void GetSourceImpl(const std::string &source, GLsizei bufSize, GLsizei *length, char *buffer)
+{
+    int index = 0;
+
+    if (bufSize > 0)
+    {
+        index = std::min(bufSize - 1, static_cast<GLsizei>(source.length()));
+        memcpy(buffer, source.c_str(), index);
+
+        buffer[index] = '\0';
+    }
+
+    if (length)
+    {
+        *length = index;
+    }
+}
+
 class CompileTask final : public angle::Closure
 {
   public:
@@ -73,7 +93,7 @@ class CompileTask final : public angle::Closure
                 ShHandle compilerHandle,
                 ShShaderOutput outputType,
                 const ShCompileOptions &options,
-                const std::string &source,
+                std::shared_ptr<const std::string> source,
                 size_t sourceHash,
                 const SharedCompiledShaderState &compiledState,
                 size_t maxComputeWorkGroupInvocations,
@@ -136,7 +156,7 @@ class CompileTask final : public angle::Closure
     ShHandle mCompilerHandle = 0;
     ShShaderOutput mOutputType;
     ShCompileOptions mOptions;
-    const std::string mSource;
+    std::shared_ptr<const std::string> mSource;
     size_t mSourceHash = 0;
     SharedCompiledShaderState mCompiledState;
 
@@ -181,7 +201,7 @@ angle::Result CompileTask::compileImpl()
         // Compiling from source
 
         // Call the translator and get the info log
-        bool result = mTranslateTask->translate(mCompilerHandle, mOptions, mSource);
+        bool result = mTranslateTask->translate(mCompilerHandle, mOptions, *mSource);
         mInfoLog    = sh::GetInfoLog(mCompilerHandle);
         if (!result)
         {
@@ -202,9 +222,9 @@ angle::Result CompileTask::compileImpl()
 
 angle::Result CompileTask::postTranslate()
 {
-    mCompiledState->buildCompiledShaderState(mCompilerHandle, mSource, mOutputType);
+    mCompiledState->buildCompiledShaderState(mCompilerHandle, mOutputType);
 
-    ASSERT(!mCompiledState->translatedSource.empty() || !mCompiledState->compiledBinary.empty());
+    ASSERT(!mCompiledState->translatedSource->empty() || !mCompiledState->compiledBinary.empty());
 
     // Validation checks for compute shaders
     if (mCompiledState->shaderType == ShaderType::Compute && mCompiledState->localSize.isDeclared())
@@ -248,7 +268,8 @@ angle::Result CompileTask::postTranslate()
             std::string substituteShader;
             if (angle::ReadFileToString(substituteShaderPath, &substituteShader))
             {
-                mCompiledState->translatedSource = std::move(substituteShader);
+                mCompiledState->translatedSource =
+                    std::make_shared<std::string>(std::move(substituteShader));
                 substitutedTranslatedShader      = true;
                 INFO() << "Translated shader substitute found, loading from "
                        << substituteShaderPath;
@@ -267,7 +288,7 @@ angle::Result CompileTask::postTranslate()
         else
         {
             std::string dumpFile = GetShaderDumpFilePath(mSourceHash, suffix);
-            writeFile(dumpFile.c_str(), mCompiledState->translatedSource);
+            writeFile(dumpFile.c_str(), *mCompiledState->translatedSource);
             INFO() << "Dumped translated source: " << dumpFile;
         }
     }
@@ -282,12 +303,12 @@ angle::Result CompileTask::postTranslate()
         shaderStream << "// GLSL\n";
         shaderStream << "//\n";
 
-        std::istringstream inputSourceStream(mSource);
+        std::istringstream inputSourceStream(*mSource);
         std::string line;
         while (std::getline(inputSourceStream, line))
         {
             // Remove null characters from the source line
-            line.erase(std::remove(line.begin(), line.end(), '\0'), line.end());
+            std::erase(line, '\0');
 
             shaderStream << "// " << line;
 
@@ -299,7 +320,8 @@ angle::Result CompileTask::postTranslate()
 
             shaderStream << std::endl;
         }
-        mCompiledState->translatedSource += shaderStream.str();
+        mCompiledState->translatedSource =
+            std::make_shared<std::string>(*mCompiledState->translatedSource + shaderStream.str());
     }
 #endif  // defined(ANGLE_ENABLE_ASSERTS)
 
@@ -309,13 +331,6 @@ angle::Result CompileTask::postTranslate()
     mTranslateTask->postTranslate(mCompilerHandle, *mCompiledState.get());
 
     return angle::Result::Continue;
-}
-
-template <typename T>
-void AppendHashValue(angle::base::SecureHashAlgorithm &hasher, T value)
-{
-    static_assert(std::is_fundamental<T>::value || std::is_enum<T>::value);
-    hasher.Update(&value, sizeof(T));
 }
 
 angle::JobThreadSafety GetTranslateTaskThreadSafety(const Context *context)
@@ -399,7 +414,12 @@ struct CompileJobDone final : public CompileJob
 
 ShaderState::ShaderState(ShaderType shaderType)
     : mCompiledState(std::make_shared<CompiledShaderState>(shaderType))
-{}
+{
+    // Small optimization to avoid allocating another shared pointer to an empty string, use the one
+    // from CompiledShaderState instead since it starts initialized to an empty string.
+    mSource = mCompiledState->translatedSource;
+    ASSERT(mSource && mSource->empty());
+}
 
 ShaderState::~ShaderState() {}
 
@@ -493,7 +513,7 @@ void Shader::setSource(const Context *context,
         INFO() << "Dumped shader source: " << dumpFile;
     }
 
-    mState.mSource     = std::move(source);
+    mState.mSource     = std::make_shared<std::string>(std::move(source));
     mState.mSourceHash = sourceHash;
 }
 
@@ -530,19 +550,24 @@ void Shader::getInfoLog(const Context *context, GLsizei bufSize, GLsizei *length
 
 int Shader::getSourceLength() const
 {
-    return mState.mSource.empty() ? 0 : (static_cast<int>(mState.mSource.length()) + 1);
+    if (mState.mSource->empty())
+    {
+        return 0;
+    }
+
+    return static_cast<int>(mState.mSource->length()) + 1;
 }
 
 int Shader::getTranslatedSourceLength(const Context *context)
 {
     resolveCompile(context);
 
-    if (mState.mCompiledState->translatedSource.empty())
+    if (mState.mCompiledState->translatedSource->empty())
     {
         return 0;
     }
 
-    return static_cast<int>(mState.mCompiledState->translatedSource.length()) + 1;
+    return static_cast<int>(mState.mCompiledState->translatedSource->length()) + 1;
 }
 
 int Shader::getTranslatedSourceWithDebugInfoLength(const Context *context)
@@ -558,31 +583,9 @@ int Shader::getTranslatedSourceWithDebugInfoLength(const Context *context)
     return (static_cast<int>(debugInfo.length()) + 1);
 }
 
-// static
-void Shader::GetSourceImpl(const std::string &source,
-                           GLsizei bufSize,
-                           GLsizei *length,
-                           char *buffer)
-{
-    int index = 0;
-
-    if (bufSize > 0)
-    {
-        index = std::min(bufSize - 1, static_cast<GLsizei>(source.length()));
-        memcpy(buffer, source.c_str(), index);
-
-        buffer[index] = '\0';
-    }
-
-    if (length)
-    {
-        *length = index;
-    }
-}
-
 void Shader::getSource(GLsizei bufSize, GLsizei *length, char *buffer) const
 {
-    GetSourceImpl(mState.mSource, bufSize, length, buffer);
+    GetSourceImpl(*mState.mSource, bufSize, length, buffer);
 }
 
 void Shader::getTranslatedSource(const Context *context,
@@ -590,13 +593,14 @@ void Shader::getTranslatedSource(const Context *context,
                                  GLsizei *length,
                                  char *buffer)
 {
-    GetSourceImpl(getTranslatedSource(context), bufSize, length, buffer);
+    resolveCompile(context);
+    GetSourceImpl(*mState.mCompiledState->translatedSource, bufSize, length, buffer);
 }
 
 const std::string &Shader::getTranslatedSource(const Context *context)
 {
     resolveCompile(context);
-    return mState.mCompiledState->translatedSource;
+    return *mState.mCompiledState->translatedSource;
 }
 
 size_t Shader::getSourceHash() const
@@ -630,24 +634,25 @@ void Shader::compile(const Context *context, angle::JobResultExpectancy resultEx
 
     // Add default options to WebGL shaders to prevent unexpected behavior during
     // compilation.
-    if (context->isWebGL())
+    if (context->isWebGL() || context->isHardenedContext())
     {
         options.initGLPosition             = true;
         options.limitCallStackDepth        = true;
         options.limitExpressionComplexity  = true;
-        options.enforcePackingRestrictions = true;
         options.initSharedVariables        = true;
-
-        if (context->getFrontendFeatures().rejectWebglShadersWithUndefinedBehavior.enabled)
-        {
-            options.rejectWebglShadersWithUndefinedBehavior = true;
-        }
+        options.rejectWebglShadersWithLargeVariables    = true;
+        options.rejectWebglShadersWithUndefinedBehavior = true;
     }
-    else
+    else if (!context->isWebGL())
     {
         // Per https://github.com/KhronosGroup/WebGL/pull/3278 gl_BaseVertex/gl_BaseInstance are
         // removed from WebGL
         options.emulateGLBaseVertexBaseInstance = true;
+    }
+
+    if (context->getFrontendFeatures().useIr.enabled)
+    {
+        options.useIR = true;
     }
 
     if (context->getFrontendFeatures().forceInitShaderVariables.enabled)
@@ -688,6 +693,12 @@ void Shader::compile(const Context *context, angle::JobResultExpectancy resultEx
             default:
                 break;
         }
+    }
+
+    if (context->getState().usesPassthroughShaders())
+    {
+        passthroughCompile(context, &options, resultExpectancy);
+        return;
     }
 
     mBoundCompiler.set(context, compiler);
@@ -743,6 +754,19 @@ void Shader::resolveCompile(const Context *context)
     const bool success    = WaitCompileJobUnlocked(mCompileJob);
     mInfoLog              = std::move(mCompileJob->compileEvent->getInfoLog());
     mState.mCompileStatus = success ? CompileStatus::COMPILED : CompileStatus::NOT_COMPILED;
+
+    // Report the compiler logs so they are more obviously visible.
+    if (!mInfoLog.empty())
+    {
+        static std::atomic_uint32_t sLoggedMessages = 0;
+        constexpr uint32_t kMaxLoggedMessages       = 4;
+        bool isLastMessage                          = false;
+        if (MessageCounterBelowMaxRepeat(&sLoggedMessages, kMaxLoggedMessages, &isLastMessage))
+        {
+            WARN() << "Compiler log: " << mInfoLog
+                   << (isLastMessage ? " (No more compiler logs will be reported in logs)" : "");
+        }
+    }
 
     if (mCompileJob->shCompilerInstance.getHandle())
     {
@@ -834,16 +858,15 @@ angle::Result Shader::serialize(const Context *context, angle::MemoryBuffer *bin
     stream.writeInt(kShaderCacheIdentifier);
     mState.mCompiledState->serialize(stream);
 
-    ASSERT(binaryOut);
-    if (!binaryOut->resize(stream.length()))
+    if (!binaryOut->resize(stream.size()))
     {
         ANGLE_PERF_WARNING(context->getState().getDebug(), GL_DEBUG_SEVERITY_LOW,
                            "Failed to allocate enough memory to serialize a shader. (%zu bytes)",
-                           stream.length());
+                           stream.size());
         return angle::Result::Stop;
     }
 
-    memcpy(binaryOut->data(), stream.data(), stream.length());
+    angle::SpanMemcpy(binaryOut->span(), angle::Span(stream));
 
     return angle::Result::Continue;
 }
@@ -887,7 +910,7 @@ bool Shader::loadBinaryImpl(const Context *context,
                             angle::JobResultExpectancy resultExpectancy,
                             bool generatedWithOfflineCompiler)
 {
-    BinaryInputStream stream(binary, length);
+    BinaryInputStream stream(angle::Span(static_cast<const uint8_t *>(binary), length));
 
     mState.mCompiledState = std::make_shared<CompiledShaderState>(mState.getShaderType());
 
@@ -898,7 +921,7 @@ bool Shader::loadBinaryImpl(const Context *context,
         // Validation layer should have already verified that the shader program version and shader
         // type match
         std::vector<uint8_t> commitString(angle::GetANGLEShaderProgramVersionHashSize(), 0);
-        stream.readBytes(commitString.data(), commitString.size());
+        stream.readBytes(commitString);
         ASSERT(memcmp(commitString.data(), angle::GetANGLEShaderProgramVersion(),
                       commitString.size()) == 0);
 
@@ -911,15 +934,15 @@ bool Shader::loadBinaryImpl(const Context *context,
         stream.readEnum<ShShaderOutput>(&outputType);
 
         // Get the shader's source string.
-        mState.mSource = stream.readString();
+        mState.mSource = std::make_shared<std::string>(stream.readString());
 
         // In the absence of element-by-element serialize/deserialize functions, read
         // ShCompileOptions and ShBuiltInResources as raw binary blobs.
         ShCompileOptions compileOptions;
-        stream.readBytes(reinterpret_cast<uint8_t *>(&compileOptions), sizeof(ShCompileOptions));
+        stream.readBytes(angle::byte_span_from_ref(compileOptions));
 
         ShBuiltInResources resources;
-        stream.readBytes(reinterpret_cast<uint8_t *>(&resources), sizeof(ShBuiltInResources));
+        stream.readBytes(angle::byte_span_from_ref(resources));
 
         setShaderKey(context, compileOptions, outputType, resources);
     }
@@ -956,34 +979,58 @@ bool Shader::loadBinaryImpl(const Context *context,
     return true;
 }
 
+void Shader::passthroughCompile(const Context *context,
+                                ShCompileOptions *compileOptions,
+                                angle::JobResultExpectancy resultExpectancy)
+{
+    mState.mCompiledState = std::make_shared<CompiledShaderState>(mState.getShaderType());
+    mState.mCompiledState->buildPassthroughCompiledShaderState(mState.mSource);
+
+    mState.mCompileStatus = CompileStatus::COMPILE_REQUESTED;
+
+    // Ask the backend to prepare the translate task
+    std::shared_ptr<rx::ShaderTranslateTask> translateTask =
+        mImplementation->compile(context, compileOptions);
+
+    std::shared_ptr<CompileTask> compileTask(new CompileTask(
+        context->getFrontendFeatures(), mState.mCompiledState, std::move(translateTask)));
+
+    const angle::JobThreadSafety threadSafety = GetTranslateTaskThreadSafety(context);
+    std::shared_ptr<angle::WaitableEvent> compileEvent =
+        context->postCompileLinkTask(compileTask, threadSafety, resultExpectancy);
+
+    mCompileJob               = std::make_shared<CompileJob>();
+    mCompileJob->compileEvent = std::make_unique<CompileEvent>(compileTask, compileEvent);
+}
+
 void Shader::setShaderKey(const Context *context,
                           const ShCompileOptions &compileOptions,
                           const ShShaderOutput &outputType,
                           const ShBuiltInResources &resources)
 {
     // Compute shader key.
-    angle::base::SecureHashAlgorithm hasher;
+    angle::BlobCacheHasher hasher;
     hasher.Init();
 
     // Start with the shader type and source.
-    AppendHashValue(hasher, mState.getShaderType());
-    hasher.Update(mState.getSource().c_str(), mState.getSource().length());
+    angle::UpdateHashWithValue(hasher, mState.getShaderType());
+    hasher.Update(mState.getSource().data(), mState.getSource().size());
 
     // Include the shader program version hash.
     hasher.Update(angle::GetANGLEShaderProgramVersion(),
                   angle::GetANGLEShaderProgramVersionHashSize());
 
-    AppendHashValue(hasher, Compiler::SelectShaderSpec(context->getState()));
-    AppendHashValue(hasher, outputType);
+    angle::UpdateHashWithValue(hasher, Compiler::SelectShaderSpec(context->getState()));
+    angle::UpdateHashWithValue(hasher, outputType);
     hasher.Update(reinterpret_cast<const uint8_t *>(&compileOptions), sizeof(compileOptions));
 
     // Include the ShBuiltInResources, which represent the extensions and constants used by the
     // shader.
     hasher.Update(reinterpret_cast<const uint8_t *>(&resources), sizeof(resources));
 
-    // Call the secure SHA hashing function.
+    // Get the hash.
     hasher.Final();
-    memcpy(mShaderHash.data(), hasher.Digest(), angle::base::kSHA1Length);
+    memcpy(mShaderHash.data(), hasher.Digest(), angle::kBlobCacheKeyLength);
 }
 
 bool WaitCompileJobUnlocked(const SharedCompileJob &compileJob)

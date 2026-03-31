@@ -104,29 +104,20 @@ enum TBasicType
     EbtImage3D,
     EbtImage2DArray,
     EbtImageCube,
-    EbtImage2DMS,
-    EbtImage2DMSArray,
     EbtImageCubeArray,
-    EbtImageRect,
     EbtImageBuffer,
     EbtIImage2D,
     EbtIImage3D,
     EbtIImage2DArray,
     EbtIImageCube,
-    EbtIImage2DMS,
-    EbtIImage2DMSArray,
     EbtIImageCubeArray,
-    EbtIImageRect,
     EbtIImageBuffer,
     EbtGuardUIntImageBegin,
     EbtUImage2D = EbtGuardUIntImageBegin,
     EbtUImage3D,
     EbtUImage2DArray,
     EbtUImageCube,
-    EbtUImage2DMS,
-    EbtUImage2DMSArray,
     EbtUImageCubeArray,
-    EbtUImageRect,
     EbtUImageBuffer,
     EbtGuardUIntImageEnd = EbtUImageBuffer,
     EbtGuardImageEnd     = EbtGuardUIntImageEnd,
@@ -341,22 +332,6 @@ inline bool IsSamplerMS(TBasicType type)
     return IsSampler2DMS(type) || IsSampler2DMSArray(type);
 }
 
-inline bool IsImageMS(TBasicType type)
-{
-    switch (type)
-    {
-        case EbtImage2DMS:
-        case EbtImage2DMSArray:
-        case EbtIImage2DMS:
-        case EbtIImage2DMSArray:
-        case EbtUImage2DMS:
-        case EbtUImage2DMSArray:
-            return true;
-        default:
-            return false;
-    }
-}
-
 inline bool IsFloatImage(TBasicType type)
 {
     switch (type)
@@ -365,10 +340,7 @@ inline bool IsFloatImage(TBasicType type)
         case EbtImage3D:
         case EbtImage2DArray:
         case EbtImageCube:
-        case EbtImage2DMS:
-        case EbtImage2DMSArray:
         case EbtImageCubeArray:
-        case EbtImageRect:
         case EbtImageBuffer:
             return true;
         default:
@@ -387,10 +359,7 @@ inline bool IsIntegerImage(TBasicType type)
         case EbtIImage3D:
         case EbtIImage2DArray:
         case EbtIImageCube:
-        case EbtIImage2DMS:
-        case EbtIImage2DMSArray:
         case EbtIImageCubeArray:
-        case EbtIImageRect:
         case EbtIImageBuffer:
             return true;
         default:
@@ -409,10 +378,7 @@ inline bool IsUnsignedImage(TBasicType type)
         case EbtUImage3D:
         case EbtUImage2DArray:
         case EbtUImageCube:
-        case EbtUImage2DMS:
-        case EbtUImage2DMSArray:
         case EbtUImageCubeArray:
-        case EbtUImageRect:
         case EbtUImageBuffer:
             return true;
         default:
@@ -726,9 +692,6 @@ inline bool IsImage2D(TBasicType type)
         case EbtImage2D:
         case EbtIImage2D:
         case EbtUImage2D:
-        case EbtImage2DMS:
-        case EbtIImage2DMS:
-        case EbtUImage2DMS:
             return true;
         case EbtImage3D:
         case EbtIImage3D:
@@ -739,15 +702,9 @@ inline bool IsImage2D(TBasicType type)
         case EbtImageCube:
         case EbtIImageCube:
         case EbtUImageCube:
-        case EbtImage2DMSArray:
-        case EbtIImage2DMSArray:
-        case EbtUImage2DMSArray:
         case EbtImageCubeArray:
         case EbtIImageCubeArray:
         case EbtUImageCubeArray:
-        case EbtImageRect:
-        case EbtIImageRect:
-        case EbtUImageRect:
         case EbtImageBuffer:
         case EbtIImageBuffer:
         case EbtUImageBuffer:
@@ -776,18 +733,9 @@ inline bool IsImage3D(TBasicType type)
         case EbtImageCube:
         case EbtIImageCube:
         case EbtUImageCube:
-        case EbtImage2DMS:
-        case EbtIImage2DMS:
-        case EbtUImage2DMS:
-        case EbtImage2DMSArray:
-        case EbtIImage2DMSArray:
-        case EbtUImage2DMSArray:
         case EbtImageCubeArray:
         case EbtIImageCubeArray:
         case EbtUImageCubeArray:
-        case EbtImageRect:
-        case EbtIImageRect:
-        case EbtUImageRect:
         case EbtImageBuffer:
         case EbtIImageBuffer:
         case EbtUImageBuffer:
@@ -806,9 +754,6 @@ inline bool IsImage2DArray(TBasicType type)
         case EbtImage2DArray:
         case EbtIImage2DArray:
         case EbtUImage2DArray:
-        case EbtImage2DMSArray:
-        case EbtIImage2DMSArray:
-        case EbtUImage2DMSArray:
             return true;
         case EbtImage2D:
         case EbtIImage2D:
@@ -819,15 +764,9 @@ inline bool IsImage2DArray(TBasicType type)
         case EbtImageCube:
         case EbtIImageCube:
         case EbtUImageCube:
-        case EbtImage2DMS:
-        case EbtIImage2DMS:
-        case EbtUImage2DMS:
         case EbtImageCubeArray:
         case EbtIImageCubeArray:
         case EbtUImageCubeArray:
-        case EbtImageRect:
-        case EbtIImageRect:
-        case EbtUImageRect:
         case EbtImageBuffer:
         case EbtIImageBuffer:
         case EbtUImageBuffer:
@@ -856,18 +795,9 @@ inline bool IsImageCube(TBasicType type)
         case EbtImage2DArray:
         case EbtIImage2DArray:
         case EbtUImage2DArray:
-        case EbtImage2DMS:
-        case EbtIImage2DMS:
-        case EbtUImage2DMS:
-        case EbtImage2DMSArray:
-        case EbtIImage2DMSArray:
-        case EbtUImage2DMSArray:
         case EbtImageCubeArray:
         case EbtIImageCubeArray:
         case EbtUImageCubeArray:
-        case EbtImageRect:
-        case EbtIImageRect:
-        case EbtUImageRect:
         case EbtImageBuffer:
         case EbtIImageBuffer:
         case EbtUImageBuffer:
@@ -961,7 +891,8 @@ enum TQualifier
     EvqSecondaryFragColorEXT,  // EXT_blend_func_extended
     EvqSecondaryFragDataEXT,   // EXT_blend_func_extended
 
-    EvqViewIDOVR,  // OVR_multiview
+    EvqViewIDOVR,          // OVR_multiview
+    EvqEmulatedViewIDOVR,  // Emulated gl_ViewID_OVR
 
     EvqClipDistance,  // APPLE_clip_distance / EXT_clip_cull_distance / ANGLE_clip_cull_distance
     EvqCullDistance,  // EXT_clip_cull_distance / ANGLE_clip_cull_distance
@@ -1062,9 +993,6 @@ enum TQualifier
     EvqLayerOut,       // gl_Layer (GS output)
     EvqLayerIn,        // gl_Layer (FS input)
 
-    // GLSL ES 3.1 extension EXT_gpu_shader5 qualifiers
-    EvqPrecise,
-
     // GLES ES 3.1 extension EXT_tessellation_shader qualifiers
     EvqPatchIn,
     EvqPatchOut,
@@ -1087,9 +1015,6 @@ enum TQualifier
     // generation.  In that case, TLayoutQualifier::location will contain the somewhat equivalent
     // constant_id.
     EvqSpecConst,
-
-    // __pixel_localEXT from EXT_shader_pixel_local_storage.
-    EvqPixelLocalEXT,
 
     // end of list
     EvqLast
@@ -1393,7 +1318,7 @@ struct TLayoutQualifier
     // KHR_blend_equation_advanced layout qualifiers.
     AdvancedBlendEquations advancedBlendEquations;
 
-    // D3D 11.3 Rasterizer Order Views (ROVs).
+    // D3D 11.3 Rasterizer Order Views (ROVs) and Metal raster_order_groups.
     // This qualifier is only used internally by ANGLE; it is not visible to the application.
     bool rasterOrdered;
 
@@ -1544,6 +1469,7 @@ inline const char *getQualifierString(TQualifier q)
     case EvqSecondaryFragColorEXT:     return "SecondaryFragColorEXT";
     case EvqSecondaryFragDataEXT:      return "SecondaryFragDataEXT";
     case EvqViewIDOVR:                 return "ViewIDOVR";
+    case EvqEmulatedViewIDOVR:         return "EmulatedViewIDOVR";
     case EvqLayerOut:                  return "LayerOut";
     case EvqLayerIn:                   return "LayerIn";
     case EvqLastFragColor:             return "LastFragColor";
@@ -1589,7 +1515,6 @@ inline const char *getQualifierString(TQualifier q)
     case EvqPrimitiveIDIn:             return "gl_PrimitiveIDIn";
     case EvqInvocationID:              return "gl_InvocationID";
     case EvqPrimitiveID:               return "gl_PrimitiveID";
-    case EvqPrecise:                   return "precise";
     case EvqClipDistance:              return "ClipDistance";
     case EvqCullDistance:              return "CullDistance";
     case EvqSample:                    return "sample";
@@ -1615,7 +1540,6 @@ inline const char *getQualifierString(TQualifier q)
     case EvqTessEvaluationOut:         return "out";
     case EvqTessCoord:                 return "TessCoord";
     case EvqSpecConst:                 return "const";
-    case EvqPixelLocalEXT:             return "__pixel_localEXT";
     default: UNREACHABLE();            return "unknown qualifier";
     }
     // clang-format on

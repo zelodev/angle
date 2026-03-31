@@ -803,7 +803,7 @@ struct GraphicsPipelineFragmentOutputVulkanStructs
 
 ANGLE_ENABLE_STRUCT_PADDING_WARNINGS
 
-using GraphicsPipelineDynamicStateList = angle::FixedVector<VkDynamicState, 23>;
+using GraphicsPipelineDynamicStateList = angle::FixedVector<VkDynamicState, 24>;
 
 enum class PipelineRobustness
 {
@@ -953,6 +953,11 @@ class GraphicsPipelineDesc final
                            GLuint divisor,
                            angle::FormatID format,
                            GLuint relativeOffset);
+    void updateVertexInputWithStride(ContextVk *contextVk,
+                                     GraphicsPipelineTransitionBits *transition,
+                                     uint32_t attribIndex,
+                                     GLuint stride);
+
     void setVertexShaderComponentTypes(gl::AttributesMask activeAttribLocations,
                                        gl::ComponentTypeMask componentTypeMask);
     void updateVertexShaderComponentTypes(GraphicsPipelineTransitionBits *transition,
@@ -1317,6 +1322,7 @@ class YcbcrConversionDesc final
 
     size_t hash() const;
     bool operator==(const YcbcrConversionDesc &other) const;
+    bool operator!=(const YcbcrConversionDesc &other) const;
 
     bool valid() const { return mExternalOrVkFormat != 0; }
     void reset();
@@ -1809,7 +1815,7 @@ static_assert(sizeof(WriteDescriptorDesc) == 4, "Size mismatch");
 
 struct DescriptorInfoDesc
 {
-    uint32_t samplerOrBufferSerial;
+    uint32_t samplerOrBufferSerialOrStorageFormat;
     uint32_t imageViewSerialOrOffset;
     uint32_t imageLayoutOrRange;
     uint32_t imageSubresourceRange;
@@ -1827,7 +1833,6 @@ static constexpr size_t kFastDescriptorSetDescLimit = 8;
 struct DescriptorDescHandles
 {
     VkBuffer buffer;
-    VkSampler sampler;
     VkImageView imageView;
     VkBufferView bufferView;
 };

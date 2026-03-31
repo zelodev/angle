@@ -133,6 +133,9 @@ namespace vk
 {
 class Renderer;
 
+constexpr VkImageUsageFlags kImageUsageTransferBits =
+    VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
 // Used for memory allocation tracking.
 enum class MemoryAllocationType;
 
@@ -378,6 +381,15 @@ class ErrorContext : angle::NonCopyable
 class GlobalOps : angle::NonCopyable
 {
   public:
+    enum class Api : uint8_t
+    {
+        Egl    = 0,
+        OpenCL = 1,
+
+        InvalidEnum = 2,
+        EnumCount   = InvalidEnum,
+    };
+
     virtual ~GlobalOps() = default;
 
     virtual void putBlob(const angle::BlobCacheKey &key, const angle::MemoryBuffer &value) = 0;
@@ -387,6 +399,8 @@ class GlobalOps : angle::NonCopyable
         const std::shared_ptr<angle::Closure> &task) = 0;
 
     virtual void notifyDeviceLost() = 0;
+
+    virtual GlobalOps::Api getFrontendApi() const = 0;
 };
 
 class RenderPassDesc;
@@ -485,6 +499,8 @@ class GarbageObject
     template <typename DerivedT, typename HandleT>
     static GarbageObject Get(WrappedObject<DerivedT, HandleT> *object)
     {
+        static_assert(HandleTypeHelper<DerivedT>::kHandleType != HandleType::CommandBuffer);
+        static_assert(HandleTypeHelper<DerivedT>::kHandleType != HandleType::Sampler);
         // Using c-style cast here to avoid conditional compile for MSVC 32-bit
         //  which fails to compile with reinterpret_cast, requiring static_cast.
         return GarbageObject(HandleTypeHelper<DerivedT>::kHandleType,
@@ -540,10 +556,17 @@ class MemoryProperties final : angle::NonCopyable
         return mMemoryProperties.memoryHeaps[heapIndex].size;
     }
 
-    const VkMemoryType &getMemoryType(uint32_t i) const { return mMemoryProperties.memoryTypes[i]; }
+    const VkMemoryType &getMemoryType(uint32_t memoryTypeIndex) const
+    {
+        return mMemoryProperties.memoryTypes[memoryTypeIndex];
+    }
 
     uint32_t getMemoryHeapCount() const { return mMemoryProperties.memoryHeapCount; }
     uint32_t getMemoryTypeCount() const { return mMemoryProperties.memoryTypeCount; }
+
+    uint32_t findTileMemoryTypeIndex() const;
+
+    void log(std::ostringstream &out) const;
 
   private:
     VkPhysicalDeviceMemoryProperties mMemoryProperties;
@@ -606,6 +629,15 @@ VkResult AllocateImageMemoryWithRequirements(ErrorContext *context,
                                              Image *image,
                                              uint32_t *memoryTypeIndexOut,
                                              DeviceMemory *deviceMemoryOut);
+
+VkResult AllocateImageMemoryFromTileHeap(ErrorContext *context,
+                                         MemoryAllocationType memoryAllocationType,
+                                         VkMemoryPropertyFlags requestedMemoryPropertyFlags,
+                                         VkMemoryPropertyFlags *memoryPropertyFlagsOut,
+                                         Image *image,
+                                         uint32_t *memoryTypeIndexOut,
+                                         DeviceMemory *deviceMemoryOut,
+                                         VkDeviceSize *sizeOut);
 
 VkResult AllocateBufferMemoryWithRequirements(ErrorContext *context,
                                               MemoryAllocationType memoryAllocationType,
@@ -723,6 +755,9 @@ class [[nodiscard]] RendererScoped final : angle::NonCopyable
     T mVar;
 };
 
+template <typename, class>
+class SharedPtr;
+
 // This is a very simple RefCount class that has no autoreleasing.
 template <typename T>
 class RefCounted : angle::NonCopyable
@@ -754,29 +789,26 @@ class RefCounted : angle::NonCopyable
         mRefCount++;
     }
 
-    void releaseRef()
-    {
-        ASSERT(isReferenced());
-        mRefCount--;
-    }
-
     uint32_t getAndReleaseRef()
     {
-        ASSERT(isReferenced());
+        assertIsReferenced();
         return mRefCount--;
     }
-
-    bool isReferenced() const { return mRefCount != 0; }
-    uint32_t getRefCount() const { return mRefCount; }
-    bool isLastReferenceCount() const { return mRefCount == 1; }
 
     T &get() { return mObject; }
     const T &get() const { return mObject; }
 
-    // A debug function to validate that the reference count is as expected used for assertions.
-    bool isRefCountAsExpected(uint32_t expectedRefCount) { return mRefCount == expectedRefCount; }
+    ANGLE_INLINE void assertIsReferenced() const { ASSERT(mRefCount != 0); }
+    ANGLE_INLINE void assertIsRefCountAsExpected(uint32_t expectedRefCount)
+    {
+        ASSERT(mRefCount == expectedRefCount);
+    }
 
   private:
+    friend class SharedPtr<T, RefCounted<T>>;
+    // This is used by SharedPtr::unique
+    bool isLastReferenceCount() const { return mRefCount == 1; }
+
     uint32_t mRefCount;
     T mObject;
 };
@@ -797,56 +829,23 @@ class AtomicRefCounted : angle::NonCopyable
         mRefCount.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // Warning: method does not perform any synchronization, therefore can not be used along with
-    // following `!isReferenced()` call to check if object is not longer accessed by other threads.
-    // Use `getAndReleaseRef()` instead, when synchronization is required.
-    void releaseRef()
-    {
-        ASSERT(isReferenced());
-        mRefCount.fetch_sub(1, std::memory_order_relaxed);
-    }
-
     // Performs acquire-release memory synchronization. When result is "1", the object is
     // guaranteed to be no longer in use by other threads, and may be safely destroyed or updated.
-    // Warning: do not mix this method and the unsynchronized `releaseRef()` call.
     unsigned int getAndReleaseRef()
     {
-        ASSERT(isReferenced());
-        return mRefCount.fetch_sub(1, std::memory_order_acq_rel);
+        const unsigned int prevValue = mRefCount.fetch_sub(1, std::memory_order_acq_rel);
+        ASSERT(prevValue != 0);
+        return prevValue;
     }
-
-    // Making decisions based on reference count is not thread safe, so it should not used in
-    // release build.
-#if defined(ANGLE_ENABLE_ASSERTS)
-    // Warning: method does not perform any synchronization.  See `releaseRef()` for details.
-    // Method may be only used after external synchronization.
-    bool isReferenced() const { return mRefCount.load(std::memory_order_relaxed) != 0; }
-    uint32_t getRefCount() const { return mRefCount.load(std::memory_order_relaxed); }
-    // This is used by SharedPtr::unique, so needs strong ordering.
-    bool isLastReferenceCount() const { return mRefCount.load(std::memory_order_acquire) == 1; }
-#else
-    // Compiler still compile but should never actually produce code.
-    bool isReferenced() const
-    {
-        UNREACHABLE();
-        return false;
-    }
-    uint32_t getRefCount() const
-    {
-        UNREACHABLE();
-        return 0;
-    }
-    bool isLastReferenceCount() const
-    {
-        UNREACHABLE();
-        return false;
-    }
-#endif
 
     T &get() { return mObject; }
     const T &get() const { return mObject; }
 
   private:
+    friend class SharedPtr<T, AtomicRefCounted<T>>;
+    // This is used by SharedPtr::unique, so needs strong ordering.
+    bool isLastReferenceCount() const { return mRefCount.load(std::memory_order_acquire) == 1; }
+
     std::atomic_uint mRefCount;
     T mObject;
 };
@@ -872,7 +871,7 @@ class SharedPtr final
         {
             // There must already have another SharedPtr holding onto the underline object when
             // WeakPtr is valid.
-            ASSERT(mRefCounted->isReferenced());
+            mRefCounted->assertIsReferenced();
             mRefCounted->addRef();
         }
     }
@@ -999,7 +998,10 @@ class WeakPtr final
     {
         // There must have another SharedPtr holding onto the underline object when WeakPtr is
         // valid.
-        ASSERT(mRefCounted == nullptr || mRefCounted->isReferenced());
+        if (mRefCounted != nullptr)
+        {
+            mRefCounted->assertIsReferenced();
+        }
         return mRefCounted != nullptr;
     }
 
@@ -1008,7 +1010,7 @@ class WeakPtr final
     T *get() const
     {
         ASSERT(mRefCounted != nullptr);
-        ASSERT(mRefCounted->isReferenced());
+        mRefCounted->assertIsReferenced();
         return &mRefCounted->get();
     }
 
@@ -1017,14 +1019,17 @@ class WeakPtr final
         ASSERT(mRefCounted != nullptr);
         // There must have another SharedPtr holding onto the underline object when WeakPtr is
         // valid.
-        ASSERT(mRefCounted->isReferenced());
+        mRefCounted->assertIsReferenced();
         return mRefCounted->getRefCount();
     }
     bool owner_equal(const SharedPtr<T> &other) const
     {
         // There must have another SharedPtr holding onto the underlying object when WeakPtr is
         // valid.
-        ASSERT(mRefCounted == nullptr || mRefCounted->isReferenced());
+        if (mRefCounted != nullptr)
+        {
+            mRefCounted->assertIsReferenced();
+        }
         return mRefCounted == other.mRefCounted;
     }
 
@@ -1055,8 +1060,7 @@ class Shared final : angle::NonCopyable
     {
         if (mRefCounted)
         {
-            mRefCounted->releaseRef();
-            if (!mRefCounted->isReferenced())
+            if (mRefCounted->getAndReleaseRef() == 1)
             {
                 mRefCounted->get().destroy(device);
                 SafeDelete(mRefCounted);
@@ -1096,8 +1100,7 @@ class Shared final : angle::NonCopyable
     {
         if (mRefCounted)
         {
-            mRefCounted->releaseRef();
-            if (!mRefCounted->isReferenced())
+            if (mRefCounted->getAndReleaseRef() == 1)
             {
                 ASSERT(mRefCounted->get().valid());
                 recycler->recycle(std::move(mRefCounted->get()));
@@ -1113,8 +1116,7 @@ class Shared final : angle::NonCopyable
     {
         if (mRefCounted)
         {
-            mRefCounted->releaseRef();
-            if (!mRefCounted->isReferenced())
+            if (mRefCounted->getAndReleaseRef() == 1)
             {
                 ASSERT(mRefCounted->get().valid());
                 (*onRelease)(std::move(mRefCounted->get()));
@@ -1129,18 +1131,23 @@ class Shared final : angle::NonCopyable
     {
         // If reference is zero, the object should have been deleted.  I.e. if the object is not
         // nullptr, it should have a reference.
-        ASSERT(!mRefCounted || mRefCounted->isReferenced());
+        if (mRefCounted != nullptr)
+        {
+            mRefCounted->assertIsReferenced();
+        }
         return mRefCounted != nullptr;
     }
 
     T &get()
     {
-        ASSERT(mRefCounted && mRefCounted->isReferenced());
+        ASSERT(mRefCounted != nullptr);
+        mRefCounted->assertIsReferenced();
         return mRefCounted->get();
     }
     const T &get() const
     {
-        ASSERT(mRefCounted && mRefCounted->isReferenced());
+        ASSERT(mRefCounted != nullptr);
+        mRefCounted->assertIsReferenced();
         return mRefCounted->get();
     }
 
@@ -1486,6 +1493,9 @@ void InitFragmentShadingRateKHRDeviceFunction(VkDevice device);
 // VK_KHR_maintenance5
 void InitMaintenance5Functions(VkDevice device);
 
+// VK_QCOM_tile_memory_heap
+void InitTileMemoryHeapFunctions(VkDevice device);
+
 // VK_GOOGLE_display_timing
 void InitGetPastPresentationTimingGoogleFunction(VkDevice device);
 
@@ -1627,12 +1637,6 @@ enum class RenderPassClosureReason
     AlreadySpecifiedElsewhere,
 
     // Implicit closures due to flush/wait/etc.
-    ContextDestruction,
-    ContextChange,
-    GLFlush,
-    GLFinish,
-    EGLSwapBuffers,
-    EGLWaitClient,
     SurfaceUnMakeCurrent,
 
     // Closure due to switching rendering to another framebuffer.
@@ -1651,7 +1655,6 @@ enum class RenderPassClosureReason
     XfbWriteThenTextureBuffer,
 
     // Use of resource after render pass
-    BufferWriteThenMap,
     BufferWriteThenOutOfRPRead,
     BufferUseThenOutOfRPWrite,
     ImageUseThenOutOfRPRead,
@@ -1660,25 +1663,18 @@ enum class RenderPassClosureReason
     XfbWriteThenIndirectDispatchBuffer,
     ImageAttachmentThenComputeRead,
     GraphicsTextureImageAccessThenComputeAccess,
-    GetQueryResult,
     BeginNonRenderPassQuery,
     EndNonRenderPassQuery,
     TimestampQuery,
     EndRenderPassQuery,
-    GLReadPixels,
 
     // Synchronization
     BufferUseThenReleaseToExternal,
     ImageUseThenReleaseToExternal,
-    BufferInUseWhenSynchronizedMap,
     GLMemoryBarrierThenStorageResource,
     StorageResourceUseThenGLMemoryBarrier,
-    ExternalSemaphoreSignal,
     SyncObjectInit,
-    SyncObjectWithFdInit,
     SyncObjectClientWait,
-    SyncObjectServerWait,
-    SyncObjectGetStatus,
     ForeignImageRelease,
 
     // Closures that ANGLE could have avoided, but doesn't for simplicity or optimization of more
@@ -1689,8 +1685,10 @@ enum class RenderPassClosureReason
     GenerateMipmapOnCPU,
     CopyTextureOnCPU,
     TextureReformatToRenderable,
-    DeviceLocalBufferMap,
     OutOfReservedQueueSerialForOutsideCommands,
+
+    // VK_QCOM_tile_memory_heap
+    TileMemorySimulatedClear,
 
     // UtilsVk
     GenerateMipmapWithDraw,
@@ -1704,12 +1702,69 @@ enum class RenderPassClosureReason
     // LegacyDithering requires updating the render pass
     LegacyDithering,
 
+    // Flushing and submitting the command buffer requires render pass closure.
+    SubmitCommands,
+
+    InvalidEnum,
+    EnumCount = InvalidEnum,
+};
+
+enum class QueueSubmitReason
+{
+    // Flush/Finish/Wait
+    EGLBindTexImage,
+    EGLSwapBuffers,
+    EGLWaitClient,
+    GLFinish,
+    GLFlush,
+    GLReadPixels,
+
+    // Context/Surface
+    AcquireNextImage,
+    ContextChange,
+    ContextDestruction,
+    ContextPriorityChange,
+    SurfaceUnMakeCurrent,
+
+    // Buffer/Image
+    CopyBufferToImageOneOff,
+    CopyBufferToSurfaceImage,
+    CopySurfaceImageToBuffer,
+    ForeignImageRelease,
+    ImageUseThenReleaseToExternal,
+    InitNonZeroMemory,
+    TextureReformatToRenderable,
+    CopyTextureOnCPU,
+    GenerateMipmapOnCPU,
+
+    // Sync/Query/Timestamp
+    ExternalSemaphoreSignal,
+    GetQueryResult,
+    GetTimestamp,
+    SyncCPUGPUTime,
+    SyncObjectInit,
+    SyncObjectClientWait,
+    SyncObjectWithFdInit,
+    DeviceLocalBufferMap,
+    BufferWriteThenMap,
+    BufferInUseWhenSynchronizedMap,
+    WaitSemaphore,
+
     // In case of memory budget issues, pending garbage needs to be freed.
     ExcessivePendingGarbage,
     OutOfMemory,
 
     // In case of reaching the render pass limit in the command buffer, it should be submitted.
     RenderPassCountLimitReached,
+    RenderPassCommandLimitReached,
+
+    // Outside command buffer submission
+    BufferToImageUpdateLimitReached,
+    ForceSubmitStagedTexture,
+
+    // Others
+    DeferredFlush,
+    DrawOverlay,
 
     InvalidEnum,
     EnumCount = InvalidEnum,

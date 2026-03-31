@@ -17,13 +17,18 @@
 #include "libANGLE/renderer/vulkan/CLKernelVk.h"
 #include "libANGLE/renderer/vulkan/CLMemoryVk.h"
 #include "libANGLE/renderer/vulkan/CLProgramVk.h"
+#include "libANGLE/renderer/vulkan/cl_types.h"
 #include "libANGLE/renderer/vulkan/vk_wrapper.h"
 
 #include "libANGLE/CLBuffer.h"
 #include "libANGLE/CLContext.h"
+#include "libANGLE/CLDevice.h"
 #include "libANGLE/CLKernel.h"
 #include "libANGLE/CLProgram.h"
+
 #include "spirv/unified1/NonSemanticClspvReflection.h"
+
+#include <algorithm>
 
 namespace rx
 {
@@ -211,19 +216,31 @@ angle::Result CLKernelVk::init()
         }
     }
 
-    // push constant setup
-    // push constant size must be multiple of 4
-    pcRange.size = roundUpPow2(pcRange.size, 4u);
+    // push constant range size and offset both need to be a multiple of 4
+    pcRange.size   = roundUpPow2(pcRange.size, 4u);
+    pcRange.offset = roundDownPow2(pcRange.offset, 4u);
+    mPipelineLayoutDesc.updatePushConstantRange(pcRange.stageFlags, pcRange.offset, pcRange.size);
+
     mPodArgumentPushConstants.resize(pcRange.size);
 
-    // push constant offset must be multiple of 4, round down to ensure this
-    pcRange.offset = roundDownPow2(pcRange.offset, 4u);
-
-    mPipelineLayoutDesc.updatePushConstantRange(pcRange.stageFlags, pcRange.offset, pcRange.size);
+    angle::EnumIterator<DescriptorSetIndex> layoutIndex(DescriptorSetIndex::LiteralSampler);
+    for (DescriptorSetIndex index : angle::AllEnums<DescriptorSetIndex>())
+    {
+        if (!getDescriptorSetLayoutDesc(index).empty())
+        {
+            ANGLE_CL_IMPL_TRY_ERROR(mContext->getDescriptorSetLayoutCache()->getDescriptorSetLayout(
+                                        mContext, getDescriptorSetLayoutDesc(index),
+                                        &getDescriptorSetLayouts()[*layoutIndex]),
+                                    CL_INVALID_OPERATION);
+            ASSERT(getDescriptorSetLayouts()[*layoutIndex]->valid());
+            ++layoutIndex;
+        }
+    }
+    ANGLE_CL_IMPL_TRY_ERROR(initPipelineLayout(), CL_INVALID_OPERATION);
 
     // initialize the descriptor pools
     // descriptor pools are setup as per their indices
-    return initializeDescriptorPools();
+    return mContext->initializeDescriptorPools(this);
 }
 
 angle::Result CLKernelVk::setArg(cl_uint argIndex, size_t argSize, const void *argValue)
@@ -237,7 +254,7 @@ angle::Result CLKernelVk::setArg(cl_uint argIndex, size_t argSize, const void *a
                 ASSERT(mPodArgumentPushConstants.size() >=
                        arg.pushConstantSize + arg.pushConstOffset);
                 arg.handle     = &mPodArgumentPushConstants[arg.pushConstOffset];
-                arg.handleSize = argSize;
+                arg.handleSize = std::min(argSize, static_cast<size_t>(arg.pushConstantSize));
                 if (argSize > 0 && argValue != nullptr)
                 {
                     // Copy the contents since app is free to delete/reassign the contents after
@@ -299,7 +316,8 @@ angle::Result CLKernelVk::createInfo(CLKernelImpl::Info *info) const
     for (auto i = 0u; i < ctx.getDevices().size(); ++i)
     {
         auto &workGroup     = info->workGroups[i];
-        const auto deviceVk = &ctx.getDevices()[i]->getImpl<CLDeviceVk>();
+        const auto device   = &ctx.getDevices()[i];
+        const auto deviceVk = &device->get()->getImpl<CLDeviceVk>();
         deviceProgramData   = mProgram->getDeviceProgramData(ctx.getDevices()[i]->getNative());
         if (deviceProgramData == nullptr)
         {
@@ -326,6 +344,16 @@ angle::Result CLKernelVk::createInfo(CLKernelImpl::Info *info) const
         else
         {
             workGroup.compileWorkGroupSize = {0, 0, 0};
+        }
+
+        if (device->get()->getInfo().khrSubgroups)
+        {
+            workGroup.subGroupSizeForNDRange =
+                mContext->getRenderer()->getPhysicalDeviceSubgroupProperties().subgroupSize;
+        }
+        else
+        {
+            workGroup.subGroupSizeForNDRange = 0;
         }
     }
 
@@ -377,6 +405,14 @@ angle::Result CLKernelVk::getOrCreateComputePipeline(vk::PipelineCacheAccess *pi
             case SpecConstantType::GlobalOffsetZ:
                 specConstantData.push_back(ndrange.globalWorkOffset[2]);
                 break;
+            case SpecConstantType::SubgroupMaxSize:
+            {
+                // We should only be here if cl_khr_subgroups is supported
+                ASSERT(device.getInfo().khrSubgroups);
+                specConstantData.push_back(
+                    mContext->getRenderer()->getPhysicalDeviceSubgroupProperties().subgroupSize);
+                break;
+            }
             default:
                 UNIMPLEMENTED();
                 continue;

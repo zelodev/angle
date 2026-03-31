@@ -628,12 +628,12 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     egl::Error unMakeCurrent(const egl::Display *display);
 
     // These create and destroy methods pass through to ResourceManager, which owns these objects.
-    BufferID createBuffer();
-    TextureID createTexture();
-    RenderbufferID createRenderbuffer();
-    ProgramPipelineID createProgramPipeline();
-    MemoryObjectID createMemoryObject();
-    SemaphoreID createSemaphore();
+    bool createBuffer(BufferID *outBuffer);
+    bool createTexture(TextureID *outTexture);
+    bool createRenderbuffer(RenderbufferID *outRenderbuffer);
+    bool createProgramPipeline(ProgramPipelineID *outProgramPipeline);
+    bool createMemoryObject(MemoryObjectID *outMemoryObject);
+    bool createSemaphore(SemaphoreID *outSemaphore);
 
     void deleteBuffer(BufferID buffer);
     void deleteTexture(TextureID texture);
@@ -683,7 +683,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     void getVertexAttribivImpl(GLuint index, GLenum pname, GLint *params) const;
 
     // Framebuffers are owned by the Context, so these methods do not pass through
-    FramebufferID createFramebuffer();
+    bool createFramebuffer(FramebufferID *outFramebuffer);
     void deleteFramebuffer(FramebufferID framebuffer);
 
     bool hasActiveTransformFeedback(ShaderProgramID program) const;
@@ -719,9 +719,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     size_t getExtensionStringCount() const;
 
     bool isExtensionRequestable(const char *name) const;
-    bool isExtensionDisablable(const char *name) const;
     size_t getRequestableExtensionStringCount() const;
-    void setExtensionEnabled(const char *name, bool enabled);
     void reinitializeAfterExtensionsChanged();
 
     rx::ContextImpl *getImplementation() const { return mImplementation.get(); }
@@ -771,6 +769,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     const TextureCapsMap &getTextureCaps() const { return mState.getTextureCaps(); }
     const Extensions &getExtensions() const { return mState.getExtensions(); }
     const Limitations &getLimitations() const { return mState.getLimitations(); }
+    bool getExtensionsEnabled() const { return mExtensionsEnabled; }
     bool isGLES1() const;
 
     // To be used **only** directly by the entry points.
@@ -786,6 +785,8 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     void contextLostErrorOnBlockingCall(angle::EntryPoint entryPoint) const;
 
     ErrorSet *getMutableErrorSetForValidation() const { return &mErrors; }
+
+    void handleExhaustionError(angle::EntryPoint entryPoint);
 
     // Specific methods needed for validation.
     bool getQueryParameterInfo(GLenum pname, GLenum *type, unsigned int *numParams) const;
@@ -834,6 +835,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
 
     bool isWebGL() const { return mState.isWebGL(); }
     bool isWebGL1() const { return mState.isWebGL1(); }
+    bool isHardenedContext() const { return mHardenedContext; }
     const char *getRendererString() const { return mRendererString; }
 
     bool isValidBufferBinding(BufferBinding binding) const { return mValidBufferBindings[binding]; }
@@ -945,10 +947,7 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     // Needed by capture serialization logic that works with a "const" Context pointer.
     void finishImmutable() const;
 
-    const angle::PerfMonitorCounterGroups &getPerfMonitorCounterGroups() const;
-
-    // Ends the currently active pixel local storage session with GL_STORE_OP_STORE on all planes.
-    void endPixelLocalStorageImplicit();
+    const angle::PerfMonitorCounterGroupsInfo &getPerfMonitorCounterGroups() const;
 
     bool areBlobCacheFuncsSet() const;
 
@@ -1099,7 +1098,9 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
     egl::Surface *mCurrentReadSurface;
     egl::Display *mDisplay;
     const bool mWebGLContext;
+    const bool mHardenedContext;
     bool mBufferAccessValidationEnabled;
+    bool mRequiresRobustBehavior;
     const bool mExtensionsEnabled;
     MemoryProgramCache *mMemoryProgramCache;
     MemoryShaderCache *mMemoryShaderCache;

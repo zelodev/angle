@@ -17,6 +17,7 @@
 #include <tuple>
 
 #include "common/MemoryBuffer.h"
+#include "common/base/anglebase/numerics/checked_math.h"
 #include "common/utilities.h"
 #include "image_util/loadimage.h"
 #include "libANGLE/Context.h"
@@ -492,7 +493,7 @@ angle::Result TextureStorage11::getCachedOrCreateUAVForImage(const gl::Context *
         d3d11::Format::Get(key.format, mRenderer->getRenderer11DeviceCaps()).uavFormat;
     ASSERT(format != DXGI_FORMAT_UNKNOWN);
     d3d11::SharedUAV uav;
-    ANGLE_TRY(createUAVForImage(context, key.level, format, *texture, &uav));
+    ANGLE_TRY(createUAVForImage(context, key, format, *texture, &uav));
     const auto &insertIt = mUavCacheForImage.insert(std::make_pair(key, std::move(uav)));
     *outUAV              = &insertIt.first->second;
     return angle::Result::Continue;
@@ -902,22 +903,35 @@ angle::Result TextureStorage11::setData(const gl::Context *context,
 
     const d3d11::Format &d3d11Format =
         d3d11::Format::Get(image->getInternalFormat(), mRenderer->getRenderer11DeviceCaps());
-    const d3d11::DXGIFormatSize &dxgiFormatInfo =
-        d3d11::GetDXGIFormatSizeInfo(d3d11Format.texFormat);
 
-    const size_t outputPixelSize = dxgiFormatInfo.pixelBytes;
-
-    UINT bufferRowPitch   = static_cast<unsigned int>(outputPixelSize) * width;
-    UINT bufferDepthPitch = bufferRowPitch * height;
-
-    const size_t neededSize               = bufferDepthPitch * depth;
     angle::MemoryBuffer *conversionBuffer = nullptr;
     const uint8_t *data                   = nullptr;
+    UINT bufferRowPitch                   = 0;
+    UINT bufferDepthPitch                 = 0;
 
     LoadImageFunctionInfo loadFunctionInfo = d3d11Format.getLoadFunctions()(type);
     if (loadFunctionInfo.requiresConversion)
     {
-        ANGLE_TRY(mRenderer->getScratchMemoryBuffer(context11, neededSize, &conversionBuffer));
+        const d3d11::DXGIFormatSize &dxgiFormatInfo =
+            d3d11::GetDXGIFormatSizeInfo(d3d11Format.texFormat);
+
+        const size_t outputPixelSize = dxgiFormatInfo.pixelBytes;
+
+        angle::CheckedNumeric<uint64_t> checkedBufferRowPitch = outputPixelSize;
+        checkedBufferRowPitch *= static_cast<uint64_t>(width);
+
+        angle::CheckedNumeric<uint64_t> checkedBufferDepthPitch = checkedBufferRowPitch * height;
+        angle::CheckedNumeric<uint64_t> checkedNeededSize       = checkedBufferDepthPitch * depth;
+
+        ANGLE_CHECK_GL_MATH(context11, checkedNeededSize.IsValid<size_t>() &&
+                                           checkedBufferRowPitch.IsValid<UINT>() &&
+                                           checkedBufferDepthPitch.IsValid<UINT>());
+
+        bufferRowPitch   = checkedBufferRowPitch.ValueOrDie<UINT>();
+        bufferDepthPitch = checkedBufferDepthPitch.ValueOrDie<UINT>();
+
+        ANGLE_TRY(mRenderer->getScratchMemoryBuffer(
+            context11, checkedNeededSize.ValueOrDie<size_t>(), &conversionBuffer));
         loadFunctionInfo.loadFunction(mRenderer->getDisplay()->getImageLoadContext(), width, height,
                                       depth, pixelData + srcSkipBytes, srcRowPitch, srcDepthPitch,
                                       conversionBuffer->data(), bufferRowPitch, bufferDepthPitch);
@@ -1514,7 +1528,7 @@ angle::Result TextureStorage11_2D::createSRVForImage(const gl::Context *context,
 }
 
 angle::Result TextureStorage11_2D::createUAVForImage(const gl::Context *context,
-                                                     int level,
+                                                     const ImageKey &key,
                                                      DXGI_FORMAT format,
                                                      const TextureHelper11 &texture,
                                                      d3d11::SharedUAV *outUAV)
@@ -1523,7 +1537,7 @@ angle::Result TextureStorage11_2D::createUAVForImage(const gl::Context *context,
     D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc;
     uavDesc.Format             = format;
     uavDesc.ViewDimension      = D3D11_UAV_DIMENSION_TEXTURE2D;
-    uavDesc.Texture2D.MipSlice = mTopLevel + level;
+    uavDesc.Texture2D.MipSlice = mTopLevel + key.level;
     ANGLE_TRY(
         mRenderer->allocateResource(GetImplAs<Context11>(context), uavDesc, texture.get(), outUAV));
     outUAV->setLabels("TexStorage2D.UAVForImage", &mKHRDebugLabel);
@@ -1782,7 +1796,7 @@ angle::Result TextureStorage11_External::createSRVForImage(const gl::Context *co
 }
 
 angle::Result TextureStorage11_External::createUAVForImage(const gl::Context *context,
-                                                           int level,
+                                                           const ImageKey &key,
                                                            DXGI_FORMAT format,
                                                            const TextureHelper11 &texture,
                                                            d3d11::SharedUAV *outUAV)
@@ -1847,7 +1861,7 @@ angle::Result TextureStorage11ImmutableBase::createSRVForImage(const gl::Context
 }
 
 angle::Result TextureStorage11ImmutableBase::createUAVForImage(const gl::Context *context,
-                                                               int level,
+                                                               const ImageKey &key,
                                                                DXGI_FORMAT format,
                                                                const TextureHelper11 &texture,
                                                                d3d11::SharedUAV *outUAV)
@@ -2726,7 +2740,7 @@ angle::Result TextureStorage11_Cube::createSRVForImage(const gl::Context *contex
 }
 
 angle::Result TextureStorage11_Cube::createUAVForImage(const gl::Context *context,
-                                                       int level,
+                                                       const ImageKey &key,
                                                        DXGI_FORMAT format,
                                                        const TextureHelper11 &texture,
                                                        d3d11::SharedUAV *outUAV)
@@ -2735,9 +2749,9 @@ angle::Result TextureStorage11_Cube::createUAVForImage(const gl::Context *contex
     D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc;
     uavDesc.Format                         = format;
     uavDesc.ViewDimension                  = D3D11_UAV_DIMENSION_TEXTURE2DARRAY;
-    uavDesc.Texture2DArray.MipSlice        = mTopLevel + level;
-    uavDesc.Texture2DArray.FirstArraySlice = 0;
-    uavDesc.Texture2DArray.ArraySize       = gl::kCubeFaceCount;
+    uavDesc.Texture2DArray.MipSlice        = mTopLevel + key.level;
+    uavDesc.Texture2DArray.FirstArraySlice = key.layered ? 0 : key.layer;
+    uavDesc.Texture2DArray.ArraySize       = key.layered ? gl::kCubeFaceCount : 1;
     ANGLE_TRY(
         mRenderer->allocateResource(GetImplAs<Context11>(context), uavDesc, texture.get(), outUAV));
     outUAV->setLabels("TexStorageCube.UAVForImage", &mKHRDebugLabel);
@@ -3037,7 +3051,7 @@ angle::Result TextureStorage11_3D::createSRVForImage(const gl::Context *context,
 }
 
 angle::Result TextureStorage11_3D::createUAVForImage(const gl::Context *context,
-                                                     int level,
+                                                     const ImageKey &key,
                                                      DXGI_FORMAT format,
                                                      const TextureHelper11 &texture,
                                                      d3d11::SharedUAV *outUAV)
@@ -3046,9 +3060,9 @@ angle::Result TextureStorage11_3D::createUAVForImage(const gl::Context *context,
     D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc;
     uavDesc.Format                = format;
     uavDesc.ViewDimension         = D3D11_UAV_DIMENSION_TEXTURE3D;
-    uavDesc.Texture3D.MipSlice    = mTopLevel + level;
-    uavDesc.Texture3D.FirstWSlice = 0;
-    uavDesc.Texture3D.WSize       = mTextureDepth;
+    uavDesc.Texture3D.MipSlice    = mTopLevel + key.level;
+    uavDesc.Texture3D.FirstWSlice = key.layered ? 0 : key.layer;
+    uavDesc.Texture3D.WSize       = key.layered ? mTextureDepth : 1;
     ANGLE_TRY(
         mRenderer->allocateResource(GetImplAs<Context11>(context), uavDesc, texture.get(), outUAV));
     outUAV->setLabels("TexStorage3D.UAVForImage", &mKHRDebugLabel);
@@ -3433,7 +3447,7 @@ angle::Result TextureStorage11_2DArray::createSRVForImage(const gl::Context *con
 }
 
 angle::Result TextureStorage11_2DArray::createUAVForImage(const gl::Context *context,
-                                                          int level,
+                                                          const ImageKey &key,
                                                           DXGI_FORMAT format,
                                                           const TextureHelper11 &texture,
                                                           d3d11::SharedUAV *outUAV)
@@ -3442,9 +3456,9 @@ angle::Result TextureStorage11_2DArray::createUAVForImage(const gl::Context *con
     D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc;
     uavDesc.Format                         = format;
     uavDesc.ViewDimension                  = D3D11_UAV_DIMENSION_TEXTURE2DARRAY;
-    uavDesc.Texture2DArray.MipSlice        = mTopLevel + level;
-    uavDesc.Texture2DArray.FirstArraySlice = 0;
-    uavDesc.Texture2DArray.ArraySize       = mTextureDepth;
+    uavDesc.Texture2DArray.MipSlice        = mTopLevel + key.level;
+    uavDesc.Texture2DArray.FirstArraySlice = key.layered ? 0 : key.layer;
+    uavDesc.Texture2DArray.ArraySize       = key.layered ? mTextureDepth : 1;
     ANGLE_TRY(
         mRenderer->allocateResource(GetImplAs<Context11>(context), uavDesc, texture.get(), outUAV));
     outUAV->setLabels("TexStorage2DArray.UAVForImage", &mKHRDebugLabel);
@@ -3764,7 +3778,7 @@ angle::Result TextureStorage11_2DMultisample::ensureTextureExists(const gl::Cont
 
         const gl::TextureCaps &textureCaps =
             mRenderer->getNativeTextureCaps().get(mFormatInfo.internalFormat);
-        GLuint supportedSamples = textureCaps.getNearestSamples(mSamples);
+        GLuint supportedSamples = textureCaps.sampleCounts.getNearestSamples(mSamples);
         desc.SampleDesc.Count   = (supportedSamples == 0) ? 1 : supportedSamples;
         desc.SampleDesc.Quality = mRenderer->getSampleDescQuality(supportedSamples);
 
@@ -3983,7 +3997,7 @@ angle::Result TextureStorage11_2DMultisampleArray::ensureTextureExists(const gl:
 
         const gl::TextureCaps &textureCaps =
             mRenderer->getNativeTextureCaps().get(mFormatInfo.internalFormat);
-        GLuint supportedSamples = textureCaps.getNearestSamples(mSamples);
+        GLuint supportedSamples = textureCaps.sampleCounts.getNearestSamples(mSamples);
         desc.SampleDesc.Count   = (supportedSamples == 0) ? 1 : supportedSamples;
         desc.SampleDesc.Quality = mRenderer->getSampleDescQuality(supportedSamples);
 
@@ -4306,7 +4320,7 @@ angle::Result TextureStorage11_Buffer::createSRVForImage(const gl::Context *cont
     return angle::Result::Continue;
 }
 angle::Result TextureStorage11_Buffer::createUAVForImage(const gl::Context *context,
-                                                         int level,
+                                                         const ImageKey &key,
                                                          DXGI_FORMAT format,
                                                          const TextureHelper11 &texture,
                                                          d3d11::SharedUAV *outUAV)

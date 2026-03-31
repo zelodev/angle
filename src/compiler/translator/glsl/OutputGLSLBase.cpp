@@ -13,6 +13,7 @@
 #include "angle_gl.h"
 #include "common/debug.h"
 #include "common/mathutil.h"
+#include "compiler/translator/BuiltInFunctionEmulator.h"
 #include "compiler/translator/Compiler.h"
 #include "compiler/translator/util.h"
 
@@ -91,13 +92,13 @@ TOutputGLSLBase::TOutputGLSLBase(TCompiler *compiler,
     : TIntermTraverser(true, true, true, &compiler->getSymbolTable()),
       mObjSink(objSink),
       mDeclaringVariable(false),
+      mSkippedDeclaringAnonymousStruct(false),
       mHashFunction(compiler->getHashFunction()),
       mUserVariablePrefix(compiler->getUserVariableNamePrefix()),
       mNameMap(compiler->getNameMap()),
       mShaderType(compiler->getShaderType()),
       mShaderVersion(compiler->getShaderVersion()),
       mOutput(compiler->getOutputType()),
-      mHighPrecisionSupported(compiler->isHighPrecisionSupported()),
       // If pixel local storage introduces new fragment outputs, we are now required to specify a
       // location for _all_ fragment outputs, including previously valid outputs that had an
       // implicit location of zero.
@@ -383,7 +384,7 @@ const char *TOutputGLSLBase::mapQualifierToString(TQualifier qualifier)
                 break;
         }
     }
-    if (sh::IsGLSL130OrNewer(mOutput))
+    if (sh::IsGLSL150OrNewer(mOutput))
     {
         switch (qualifier)
         {
@@ -401,13 +402,13 @@ const char *TOutputGLSLBase::mapQualifierToString(TQualifier qualifier)
     switch (qualifier)
     {
         // When emulated, gl_ViewID_OVR uses flat qualifiers.
-        case EvqViewIDOVR:
+        case EvqEmulatedViewIDOVR:
             return mShaderType == GL_FRAGMENT_SHADER ? "flat in" : "flat out";
 
         // gl_ClipDistance / gl_CullDistance require different qualifiers based on shader type.
         case EvqClipDistance:
         case EvqCullDistance:
-            return (sh::IsGLSL130OrNewer(mOutput) || mShaderVersion > 100)
+            return (sh::IsGLSL150OrNewer(mOutput) || mShaderVersion > 100)
                        ? (mShaderType == GL_FRAGMENT_SHADER ? "in" : "out")
                        : "varying";
 
@@ -465,8 +466,30 @@ void TOutputGLSLBase::writeVariableType(const TType &type,
         out << getMemoryQualifiers(type);
     }
 
-    // Declare the struct.
-    if (type.isStructSpecifier())
+    // Declare the struct.  If this is an anonymous struct that's separated from its declaration,
+    // don't declare it independently, but put it together back with the variable that declared it.
+    // That would look like for example:
+    //
+    //     out struct
+    //     {
+    //        ...
+    //     } variable;
+    const bool isStruct          = type.getStruct() != nullptr;
+    const bool isAnonymousStruct = isStruct && type.getStruct()->isNameless();
+    const bool isAnonymousStructDeclaration =
+        isAnonymousStruct && symbol->symbolType() == SymbolType::Empty;
+    const bool isNamedStructDeclaration = type.isStructSpecifier() && !isAnonymousStruct;
+    ASSERT(!isAnonymousStructDeclaration || type.isStructSpecifier());
+    // Declare struct if:
+    //
+    // * It's named (regardless of standalone or part of variable declaration)
+    // * It's anonymous, but this is the variable declaration.  Generate the struct as part of the
+    //   variable declaration, and don't give it a name.
+    const bool shouldDeclareStruct =
+        isStruct &&
+        (isNamedStructDeclaration || (isAnonymousStruct && !isAnonymousStructDeclaration));
+    mSkippedDeclaringAnonymousStruct = isAnonymousStructDeclaration;
+    if (shouldDeclareStruct)
     {
         const TStructure *structure = type.getStruct();
 
@@ -476,7 +499,7 @@ void TOutputGLSLBase::writeVariableType(const TType &type,
     {
         declareInterfaceBlock(type);
     }
-    else
+    else if (!isAnonymousStructDeclaration)
     {
         if (writeVariablePrecision(type.getPrecision()))
             out << " ";
@@ -694,7 +717,12 @@ bool TOutputGLSLBase::visitBinary(Visit visit, TIntermBinary *node)
         case EOpIndexDirectInterfaceBlock:
             if (visit == InVisit)
             {
-                out << ".";
+                if (node->getLeft()->getAsSymbolNode() == nullptr ||
+                    node->getLeft()->getAsSymbolNode()->variable().symbolType() !=
+                        SymbolType::Empty)
+                {
+                    out << ".";
+                }
                 const TInterfaceBlock *interfaceBlock =
                     node->getLeft()->getType().getInterfaceBlock();
                 const TIntermConstantUnion *index = node->getRight()->getAsConstantUnion();
@@ -906,8 +934,11 @@ bool TOutputGLSLBase::visitBlock(Visit visit, TIntermBlock *node)
 
         curNode->traverse(this);
 
-        if (isSingleStatement(curNode))
+        if (isSingleStatement(curNode) && !mSkippedDeclaringAnonymousStruct)
+        {
             out << ";\n";
+        }
+        mSkippedDeclaringAnonymousStruct = false;
     }
 
     // Scope the blocks except when at the global scope.
@@ -1198,7 +1229,9 @@ void TOutputGLSLBase::declareStruct(const TStructure *structure)
 
     out << "struct ";
 
-    if (structure->symbolType() != SymbolType::Empty)
+    // Keep nameless structs nameless, because they may need to match with another shader
+    // stage (for example if used to declare a varying).
+    if (structure->symbolType() != SymbolType::Empty && !structure->isNameless())
     {
         out << hashName(structure) << " ";
     }
@@ -1490,13 +1523,6 @@ bool TOutputGLSLBase::needsToWriteLayoutQualifier(const TType &type)
 
     if (type.getBasicType() == EbtInterfaceBlock)
     {
-        if (type.getQualifier() == EvqPixelLocalEXT)
-        {
-            // We only use per-member EXT_shader_pixel_local_storage formats, so the PLS interface
-            // block will never have a layout qualifier.
-            ASSERT(layoutQualifier.imageInternalFormat == EiifUnspecified);
-            return false;
-        }
         return true;
     }
 

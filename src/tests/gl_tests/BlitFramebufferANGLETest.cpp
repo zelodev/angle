@@ -3446,6 +3446,7 @@ TEST_P(BlitFramebufferTest, BlitWithDifferentSizesColorAttachments)
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, smallColorBuffer,
                            0);
     EXPECT_GL_NO_ERROR();
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     GLFramebuffer dstFramebuffer;
     GLRenderbuffer dstRenderbuffer;
@@ -3498,7 +3499,6 @@ TEST_P(BlitFramebufferTest, BlitLargeColorSmallDepthAttachments)
     constexpr GLint kHeight = 48;
     GLFramebuffer srcFramebuffer;
     glBindFramebuffer(GL_FRAMEBUFFER, srcFramebuffer);
-    glDisable(GL_DEPTH_TEST);
 
     GLTexture srcLargeColorBuffer;
     glBindTexture(GL_TEXTURE_2D, srcLargeColorBuffer);
@@ -3513,6 +3513,10 @@ TEST_P(BlitFramebufferTest, BlitLargeColorSmallDepthAttachments)
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, kWidth / 2, kHeight / 2);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
                               srcSmallDepthBuffer);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_ALWAYS);
     ANGLE_GL_PROGRAM(drawGreen, essl3_shaders::vs::Simple(), essl3_shaders::fs::Green());
     drawQuad(drawGreen, essl3_shaders::PositionAttrib(), 0.5f);
 
@@ -3552,8 +3556,6 @@ TEST_P(BlitFramebufferTest, BlitLargeColorSmallDepthAttachments)
     }
 
     ANGLE_GL_PROGRAM(drawRed, essl3_shaders::vs::Simple(), essl3_shaders::fs::Red());
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(false);
     glDepthFunc(GL_LESS);
     drawQuad(drawRed, essl3_shaders::PositionAttrib(), 0.7f);
 
@@ -3575,7 +3577,6 @@ TEST_P(BlitFramebufferTest, BlitSmallColorLargeDepthAttachments)
     constexpr GLint kHeight = 48;
     GLFramebuffer srcFramebuffer;
     glBindFramebuffer(GL_FRAMEBUFFER, srcFramebuffer);
-    glDisable(GL_DEPTH_TEST);
 
     GLTexture srcSmallColorBuffer;
     glBindTexture(GL_TEXTURE_2D, srcSmallColorBuffer);
@@ -3590,6 +3591,10 @@ TEST_P(BlitFramebufferTest, BlitSmallColorLargeDepthAttachments)
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, kWidth, kHeight);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
                               srcLargeDepthBuffer);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_ALWAYS);
     ANGLE_GL_PROGRAM(drawGreen, essl3_shaders::vs::Simple(), essl3_shaders::fs::Green());
     drawQuad(drawGreen, essl3_shaders::PositionAttrib(), 0.5f);
 
@@ -3628,8 +3633,6 @@ TEST_P(BlitFramebufferTest, BlitSmallColorLargeDepthAttachments)
     }
 
     ANGLE_GL_PROGRAM(drawRed, essl3_shaders::vs::Simple(), essl3_shaders::fs::Red());
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(false);
     glDepthFunc(GL_LESS);
     drawQuad(drawRed, essl3_shaders::PositionAttrib(), 0.7f);
 
@@ -4451,23 +4454,18 @@ TEST_P(BlitFramebufferTestES31, BlitNonZeroLevelSource)
 // Use this to select which configurations (e.g. which renderer, which GLES major version) these
 // tests should be run against.
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(BlitFramebufferANGLETest);
-ANGLE_INSTANTIATE_TEST(BlitFramebufferANGLETest,
-                       ES2_D3D9(),
-                       ES2_D3D11(),
-                       ES2_D3D11_PRESENT_PATH_FAST(),
-                       ES2_OPENGL(),
-                       ES3_OPENGL(),
-                       ES2_VULKAN(),
-                       ES3_VULKAN(),
-                       ES3_VULKAN().enable(Feature::EmulatedPrerotation90),
-                       ES3_VULKAN().enable(Feature::EmulatedPrerotation180),
-                       ES3_VULKAN().enable(Feature::EmulatedPrerotation270),
-                       ES3_VULKAN()
-                           .disable(Feature::SupportsExtendedDynamicState)
-                           .disable(Feature::SupportsExtendedDynamicState2),
-                       ES3_VULKAN().disable(Feature::SupportsExtendedDynamicState2),
-                       ES2_METAL(),
-                       ES2_METAL().disable(Feature::HasShaderStencilOutput));
+ANGLE_INSTANTIATE_TEST_ES2_AND(BlitFramebufferANGLETest,
+                               ES2_D3D11_PRESENT_PATH_FAST(),
+                               ES3_OPENGL(),
+                               ES3_VULKAN(),
+                               ES3_VULKAN().enable(Feature::EmulatedPrerotation90),
+                               ES3_VULKAN().enable(Feature::EmulatedPrerotation180),
+                               ES3_VULKAN().enable(Feature::EmulatedPrerotation270),
+                               ES3_VULKAN()
+                                   .disable(Feature::SupportsExtendedDynamicState)
+                                   .disable(Feature::SupportsExtendedDynamicState2),
+                               ES3_VULKAN().disable(Feature::SupportsExtendedDynamicState2),
+                               ES2_METAL().disable(Feature::HasShaderStencilOutput));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(BlitFramebufferTest);
 ANGLE_INSTANTIATE_TEST_ES3_AND(BlitFramebufferTest,
@@ -4478,8 +4476,8 @@ ANGLE_INSTANTIATE_TEST_ES3_AND(BlitFramebufferTest,
                                    .disable(Feature::SupportsExtendedDynamicState)
                                    .disable(Feature::SupportsExtendedDynamicState2),
                                ES3_VULKAN().disable(Feature::SupportsExtendedDynamicState2),
-                               ES3_VULKAN().enable(Feature::DisableFlippingBlitWithCommand),
-                               ES3_METAL().disable(Feature::HasShaderStencilOutput));
+                               ES3_METAL().disable(Feature::HasShaderStencilOutput),
+                               ES3_WEBGPU());
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(BlitFramebufferTestES31);
 ANGLE_INSTANTIATE_TEST_ES31(BlitFramebufferTestES31);
