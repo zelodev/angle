@@ -13,62 +13,111 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Free up disk space
-        uses: easimon/maximize-build-space@v10
-        with:
-          swap-size-mb: 1024
-          remove-dotnet: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-
-      - name: Free up disk space P2
-        run: |
-          rm -rf *
-
-          sudo rm -rf \
-            /usr/local/lib/android /opt/ghc \
-            /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup \
-            /usr/lib/jvm || true
-
-          sudo apt install aptitude -y >/dev/null 2>&1
-          sudo aptitude purge aria2 ansible azure-cli shellcheck rpm xorriso zsync \
-            esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
-            google-cloud-sdk imagemagick \
-            libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional kubectl \
-            mercurial apt-transport-https mono-complete libmysqlclient \
-            unixodbc-dev yarn chrpath libssl-dev libxft-dev \
-            libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev \
-            snmp pollinate libpq-dev postgresql-client powershell ruby-full \
-            sphinxsearch subversion mongodb-org azure-cli microsoft-edge-stable \
-            -y -f >/dev/null 2>&1
-          sudo aptitude purge google-cloud-sdk -f -y >/dev/null 2>&1
-          sudo aptitude purge microsoft-edge-stable -f -y >/dev/null 2>&1 || true
-          sudo apt purge microsoft-edge-stable -f -y >/dev/null 2>&1 || true
-          sudo aptitude purge '~n ^mysql' -f -y >/dev/null 2>&1
-          sudo aptitude purge '~n ^php' -f -y >/dev/null 2>&1
-          sudo aptitude purge '~n ^dotnet' -f -y >/dev/null 2>&1
-          sudo apt-get autoremove -y >/dev/null 2>&1
-          sudo apt-get autoclean -y >/dev/null 2>&1
-    
+#      - name: Free up disk space
+#        uses: easimon/maximize-build-space@v10
+#       with:
+#          swap-size-mb: 1024
+#          remove-dotnet: 'true'
+#          remove-haskell: 'true'
+#          remove-codeql: 'true'
+#          remove-docker-images: 'true'
+#
+#      - name: Free up disk space P2
+#        run: |
+#          rm -rf *
+#
+#          sudo rm -rf \
+#            /usr/local/lib/android /opt/ghc \
+#           /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup \
+#            /usr/lib/jvm || true
+#
+#          sudo apt install aptitude -y >/dev/null 2>&1
+#          sudo aptitude purge aria2 ansible azure-cli shellcheck rpm xorriso zsync \
+#            esl-erlang firefox gfortran-8 gfortran-9 google-chrome-stable \
+#            google-cloud-sdk imagemagick \
+#            libmagickcore-dev libmagickwand-dev libmagic-dev ant ant-optional kubectl \
+#            mercurial apt-transport-https mono-complete libmysqlclient \
+#            unixodbc-dev yarn chrpath libssl-dev libxft-dev \
+#            libfreetype6 libfreetype6-dev libfontconfig1 libfontconfig1-dev \
+#            snmp pollinate libpq-dev postgresql-client powershell ruby-full \
+#            sphinxsearch subversion mongodb-org azure-cli microsoft-edge-stable \
+#            -y -f >/dev/null 2>&1
+#          sudo aptitude purge google-cloud-sdk -f -y >/dev/null 2>&1
+#          sudo aptitude purge microsoft-edge-stable -f -y >/dev/null 2>&1 || true
+#          sudo apt purge microsoft-edge-stable -f -y >/dev/null 2>&1 || true
+#          sudo aptitude purge '~n ^mysql' -f -y >/dev/null 2>&1
+#          sudo aptitude purge '~n ^php' -f -y >/dev/null 2>&1
+#          sudo aptitude purge '~n ^dotnet' -f -y >/dev/null 2>&1
+#          sudo apt-get autoremove -y >/dev/null 2>&1
+#          sudo apt-get autoclean -y >/dev/null 2>&1
+#    
       - name: Get Angle
-        uses: actions/checkout@v4
+        uses: actions/checkout@main
         with:
           path: 'angle'
           fetch-depth: 1
-
+          
+      - name: Cache depot_tools
+        id: cache-depot-tools
+        uses: actions/cache@main
+        with:
+          path: depot_tools
+          key: depot-tools-${{ runner.os }}-${{ hashFiles('.gclient') }}
+          restore-keys: |
+            depot-tools-${{ runner.os }}-
+            
       - name: Get & Install depot_tools
         run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo rm -rf JAVA_HOME_8_X64
+          sudo rm -rf JAVA_HOME_11_X64
+          sudo rm -rf JAVA_HOME_17_X64
+          sudo rm -rf JAVA_HOME_21_X64
+          sudo rm -rf JAVA_HOME_25_X64
+          sudo rm -rf /usr/share/miniconda
+          sudo rm -rf /usr/local/share/vcpkg
+          sudo rm -rf /usr/local/lib/android/sdk/ndk/27.3.13750724
           git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
           echo "$GITHUB_WORKSPACE/depot_tools" >> $GITHUB_PATH
           echo $PATH
-          
+
+      - name: Cache ANGLE dependencies
+        id: cache-deps
+        uses: actions/cache@main
+        with:
+          path: |
+            build/linux
+            third_party/llvm-build
+            third_party/rust-toolchain
+            tools/glslang
+            tools/flex-bison
+          key: deps-${{ runner.os }}-${{ hashFiles('DEPS') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+            
       - name: Setup Angle
         run: |
           cd angle
-
+          
           vpython3 scripts/bootstrap.py
-          gclient sync
+          gclient sync --no-history --shallow --reset --force
+          
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@main
+        with:
+          key: angle-ccache
+          max-size: 5G
+
+      - name: Setup ccache path
+        shell: bash
+        run: |
+         echo "$HOME/.local/bin" >> $GITHUB_PATH
+         echo "/usr/lib/ccache" >> $GITHUB_PATH
+         which ccache || echo "ccache not found"
+         ccache --version
 
       - name: Make GN arg
         run: |
@@ -80,8 +129,6 @@ jobs:
           echo "target_os = \"android\"
           target_cpu = \"arm64\"
           arm_control_flow_integrity = "\none\"
-          use_thin_lto = true
-          thin_lto_enable_optimizations = true
           is_component_build = false
           is_debug = false
           is_official_build = true
@@ -90,10 +137,7 @@ jobs:
           android64_ndk_api_level = 29
           build_angle_deqp_tests = false
           dcheck_always_on = false
-          proprietary_codecs = true
           symbol_level = 0
-          blink_symbol_level = 0
-          v8_symbol_level = 0
           angle_enable_vulkan_validation_layers = false
           angle_enable_null = false
           angle_force_thread_safety = false
@@ -101,17 +145,18 @@ jobs:
           generate_build_files = 0
           angle_expose_non_conformant_extensions_and_versions = true" >> out/Android-${{matrix.arch}}/args.gn
 
-          gn gen out/Android-${{matrix.arch}}
+          gn gen out/Android-${{matrix.arch}} --threads=$(nproc)
+          gn args out/Android-${{ matrix.arch }} --list --short
 
       - name: Build Angle (libraries)
         run: |
           cd angle
-          autoninja -C out/Android-${{matrix.arch}}
+          autoninja -C out/Android-${{matrix.arch}} -j $(nproc)
 
       - name: Build Angle (apk)
         run: |
           cd angle
-          autoninja -C out/Android-${{matrix.arch}} angle_apks
+          autoninja -C out/Android-${{matrix.arch}} -j $(nproc) angle_apks
 
       - name: Upload Build Outputs
         uses: actions/upload-artifact@v4
