@@ -133,8 +133,7 @@ jobs:
           is_debug = false
           is_official_build = true
           angle_build_all = false
-          android32_ndk_api_level = 29
-          android64_ndk_api_level = 29
+          android_ndk_api_level = 29
           build_angle_deqp_tests = false
           dcheck_always_on = false
           symbol_level = 0
@@ -151,10 +150,14 @@ jobs:
 
       - name: Build Angle (libraries)
         run: |
+          export PATH=`pwd`/depot_tools:$PATH
+          echo $PATH
           autoninja -C out/Android-${{matrix.arch}} -j $(nproc)
 
       - name: Build Angle (apk)
         run: |
+          export PATH=`pwd`/depot_tools:$PATH
+          echo $PATH
           autoninja -C out/Android-${{matrix.arch}} -j $(nproc) angle_apks
 
       - name: Upload Build Outputs
