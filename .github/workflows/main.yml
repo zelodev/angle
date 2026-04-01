@@ -67,6 +67,7 @@ jobs:
             depot-tools-${{ runner.os }}-
             
       - name: Get & Install depot_tools
+        if: steps.cache-depot-tools.outputs.cache-hit != 'true'
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
