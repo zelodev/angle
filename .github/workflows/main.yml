@@ -54,7 +54,6 @@ jobs:
       - name: Get Angle
         uses: actions/checkout@main
         with:
-          path: 'angle'
           fetch-depth: 1
           
       - name: Cache depot_tools
