@@ -101,8 +101,8 @@ jobs:
             
       - name: Setup Angle
         run: |
-          cd angle
-          
+          export PATH=`pwd`/depot_tools:$PATH
+          echo $PATH
           vpython3 scripts/bootstrap.py
           gclient sync --no-history --shallow --reset --force
           
@@ -122,11 +122,11 @@ jobs:
 
       - name: Make GN arg
         run: |
-          cd angle
-          
+          export PATH=`pwd`/depot_tools:$PATH
+          echo $PATH
           mkdir -p out/Android-${{matrix.arch}}
           touch out/Android-${{matrix.arch}}/args.gn
-
+          
           echo "target_os = \"android\"
           target_cpu = \"arm64\"
           arm_control_flow_integrity = \"none\"
@@ -153,12 +153,10 @@ jobs:
 
       - name: Build Angle (libraries)
         run: |
-          cd angle
           autoninja -C out/Android-${{matrix.arch}} -j $(nproc)
 
       - name: Build Angle (apk)
         run: |
-          cd angle
           autoninja -C out/Android-${{matrix.arch}} -j $(nproc) angle_apks
 
       - name: Upload Build Outputs
